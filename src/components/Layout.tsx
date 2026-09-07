@@ -6,6 +6,7 @@ import {
   Filter,
   Users,
   FileText,
+  Settings as SettingsIcon,
   LogOut,
   Plus,
   Search,
@@ -42,6 +43,9 @@ export default function Layout() {
     if (path.startsWith('/orcamentos')) {
       return path.split('/').length > 2 ? 'Detalhe do Orçamento' : 'Orçamentos'
     }
+    if (path.startsWith('/configuracoes')) {
+      return 'Configurações'
+    }
     return 'CRM'
   }
 
@@ -65,6 +69,7 @@ export default function Layout() {
     { label: 'Leads', to: '/leads', icon: Filter },
     { label: 'Contatos', to: '/contatos', icon: Users },
     { label: 'Orçamentos', to: '/orcamentos', icon: FileText },
+    { label: 'Configurações', to: '/configuracoes', icon: SettingsIcon },
   ]
 
   const userName = user?.name || user?.email?.split('@')[0] || 'Usuário'

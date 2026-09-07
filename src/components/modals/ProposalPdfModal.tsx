@@ -7,15 +7,12 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Printer, Download, MessageCircle, Info } from 'lucide-react'
-import type { Quote, QuoteItem, GraficaTiragemRow } from '@/types/crm'
-import {
-  buildProposalPrintHTML,
-  openProposalPdfWindow,
-  formatCurrencyBRL,
-} from '@/lib/pdf-generator'
+import type { Quote, QuoteItem, GraficaTiragemRow, CompanySettings } from '@/types/crm'
+import { openProposalPdfWindow, formatCurrencyBRL } from '@/lib/pdf-generator'
 import { formatWhatsAppUrl } from '@/lib/quote-utils'
+import { useCompanySettings } from '@/contexts/SettingsContext'
 
 interface ProposalPdfModalProps {
   open: boolean
@@ -26,6 +23,7 @@ interface ProposalPdfModalProps {
   especificacoesGrafica: string
   condicoes: string
   descontoPercentual: number
+  companySettings?: CompanySettings
 }
 
 export function ProposalPdfModal({
@@ -37,11 +35,22 @@ export function ProposalPdfModal({
   especificacoesGrafica,
   condicoes,
   descontoPercentual,
+  companySettings: customCompanySettings,
 }: ProposalPdfModalProps) {
+  const { settings: globalCompanySettings } = useCompanySettings()
+  const companySettings = customCompanySettings || globalCompanySettings
+
   const [activeTab, setActiveTab] = useState<'preview' | 'whatsapp'>('preview')
 
   const clienteNome = quote.expand?.contact_id?.nome || quote.expand?.lead_id?.nome || 'Cliente'
   const telefone = quote.expand?.contact_id?.telefone || quote.expand?.lead_id?.telefone || ''
+
+  const companyNome = companySettings?.nome_comercial || 'Editora Oeste'
+  const companyRazao = companySettings?.razao_social || 'Editora Oeste Comunicação & Gráfica Ltda.'
+  const companyCnpj = companySettings?.cnpj || '14.882.910/0001-35'
+  const companyCidade = companySettings?.cidade_uf || 'Campo Grande - MS'
+  const companyTelefone = companySettings?.telefone || '(67) 99843-2210'
+  const companyPortal = companySettings?.portal || 'editoraoeste.com.br'
 
   const handlePrintOrSavePdf = () => {
     openProposalPdfWindow({
@@ -51,6 +60,7 @@ export function ProposalPdfModal({
       especificacoesGrafica,
       condicoes,
       descontoPercentual,
+      companySettings,
       autoPrint: true,
     })
   }
@@ -63,12 +73,13 @@ export function ProposalPdfModal({
       especificacoesGrafica,
       condicoes,
       descontoPercentual,
+      companySettings,
       autoPrint: false,
     })
   }
 
   // Mensagem WhatsApp para envio orientando sobre o anexo em PDF
-  const waMsg = `Olá ${clienteNome}! Segue anexa a nossa proposta comercial da Editora Oeste referente a "${quote.titulo}" (Ref. ${quote.codigo || 'ORC'}). Qualquer dúvida estou à total disposição!`
+  const waMsg = `Olá ${clienteNome}! Segue anexa a nossa proposta comercial da ${companyNome} referente a "${quote.titulo}" (Ref. ${quote.codigo || 'ORC'}). Qualquer dúvida estou à total disposição!`
   const waUrl = telefone ? formatWhatsAppUrl(telefone, waMsg) : ''
 
   const subtotalEditorial = items.reduce(
@@ -85,7 +96,7 @@ export function ProposalPdfModal({
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pr-6">
             <div>
               <DialogTitle className="font-serif text-lg font-bold text-[#1E1B16] flex items-center gap-2">
-                <span>Proposta Comercial em PDF — Editora Oeste</span>
+                <span>Proposta Comercial em PDF — {companyNome}</span>
                 <span className="font-mono text-xs px-2 py-0.5 rounded bg-white border border-[#E5DFD6] text-[#B3541E]">
                   {quote.codigo || 'ORC'}
                 </span>
@@ -147,16 +158,20 @@ export function ProposalPdfModal({
           {activeTab === 'preview' ? (
             /* Container da Proposta no Estilo Papel */
             <div className="max-w-[760px] mx-auto bg-white p-6 sm:p-8 rounded-lg shadow-sm border border-[#E5DFD6] space-y-5 text-xs sm:text-sm">
-              {/* Header Editora Oeste */}
+              {/* Header Empresa */}
               <div className="border-b-2 border-[#B3541E] pb-4 flex flex-col sm:flex-row justify-between gap-4">
                 <div>
-                  <h2 className="font-serif text-2xl font-bold text-[#B3541E]">Editora Oeste</h2>
+                  <h2 className="font-serif text-2xl font-bold text-[#B3541E]">{companyNome}</h2>
                   <p className="text-xs text-[#666] leading-relaxed mt-1">
-                    <strong>Editora Oeste Comunicação & Gráfica Ltda.</strong>
+                    <strong>{companyRazao}</strong>
                     <br />
-                    CNPJ: 14.882.910/0001-35 • Campo Grande - MS
+                    {companyCnpj ? `CNPJ: ${companyCnpj}` : ''}
+                    {companyCnpj && companyCidade ? ' • ' : ''}
+                    {companyCidade}
                     <br />
-                    Portal: editoraoeste.com.br • WhatsApp: (67) 99843-2210
+                    {companyPortal ? `Portal: ${companyPortal}` : ''}
+                    {companyPortal && companyTelefone ? ' • ' : ''}
+                    {companyTelefone ? `WhatsApp: ${companyTelefone}` : ''}
                   </p>
                 </div>
                 <div className="text-left sm:text-right text-xs text-[#4A4238] space-y-1">
@@ -390,7 +405,7 @@ export function ProposalPdfModal({
         <div className="p-3.5 border-t border-[#E5DFD6] bg-[#FAF8F5] flex items-center justify-between text-xs text-[#8A8178]">
           <span className="flex items-center gap-1">
             <Info className="w-3.5 h-3.5 text-[#B3541E]" />
-            Layout espelhado do modelo oficial da Editora Oeste
+            Layout oficial de proposta comercial ({companyNome})
           </span>
           <Button
             variant="ghost"

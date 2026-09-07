@@ -28,6 +28,7 @@ import {
   CONDICOES_PADRAO_EDITORA_OESTE,
   TIRAGENS_PADRAO,
 } from '@/lib/pdf-generator'
+import { useCompanySettings } from '@/contexts/SettingsContext'
 import { useToast } from '@/hooks/use-toast'
 import type { Lead, QuoteItem, QuoteStatus, GraficaTiragemRow } from '@/types/crm'
 import { Plus, Trash2, Sparkles, BookOpen } from 'lucide-react'
@@ -53,6 +54,7 @@ export function NewQuoteModal({
   onSuccess,
 }: NewQuoteModalProps) {
   const { toast } = useToast()
+  const { settings: companySettings } = useCompanySettings()
   const [leads, setLeads] = useState<Lead[]>([])
   const [selectedLeadId, setSelectedLeadId] = useState<string>(initialLeadId || '')
   const [titulo, setTitulo] = useState('')
@@ -70,7 +72,9 @@ export function NewQuoteModal({
   const [tiragens, setTiragens] = useState<GraficaTiragemRow[]>(TIRAGENS_PADRAO)
 
   // Condições Gerais Editáveis
-  const [condicoesGerais, setCondicoesGerais] = useState(CONDICOES_PADRAO_EDITORA_OESTE)
+  const [condicoesGerais, setCondicoesGerais] = useState(
+    companySettings.texto_condicoes_padrao || CONDICOES_PADRAO_EDITORA_OESTE,
+  )
 
   // Autocomplete e memória
   const [sugestoesCache, setSugestoesCache] = useState<ItemSugestao[]>([])
@@ -96,8 +100,11 @@ export function NewQuoteModal({
       setErrors({})
       // Pré-carregar catálogo inicial para sugestões rápidas
       searchItemSugestoes('').then(setSugestoesCache)
+      if (companySettings.texto_condicoes_padrao) {
+        setCondicoesGerais(companySettings.texto_condicoes_padrao)
+      }
     }
-  }, [open, initialLeadId])
+  }, [open, initialLeadId, companySettings.texto_condicoes_padrao])
 
   const handleAddItem = () => {
     setItems((prev) => [...prev, { descricao: '', quantidade: 1, valor_unitario: 0 }])
@@ -247,7 +254,7 @@ export function NewQuoteModal({
           <DialogTitle className="font-serif text-xl text-[#1E1B16] flex items-center gap-2">
             <span>Novo Orçamento Comercial</span>
             <span className="text-xs px-2 py-0.5 rounded bg-[#FAF8F5] text-[#8A8178] border border-[#E5DFD6]">
-              Modelo Editora Oeste
+              {companySettings.nome_comercial || 'Editora Oeste'}
             </span>
           </DialogTitle>
           <DialogDescription className="text-xs text-[#8A8178]">

@@ -103,3 +103,18 @@ export interface CatalogItem extends RecordModel {
     category_id?: QuoteCategory
   }
 }
+
+export interface CompanySettings extends RecordModel {
+  nome_comercial: string
+  razao_social?: string
+  cnpj?: string
+  cidade_uf?: string
+  telefone?: string
+  email?: string
+  portal?: string
+  prazo_execucao_dias?: number
+  condicoes_pagamento?: string
+  condicoes_entrega?: string
+  validade_proposta_dias?: number
+  texto_condicoes_padrao?: string
+}

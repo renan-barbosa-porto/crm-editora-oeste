@@ -67,11 +67,13 @@ import {
 import { cn } from '@/lib/utils'
 import { getPrazoDestaque, getQuoteDataEnvio, formatWhatsAppUrl } from '@/lib/quote-utils'
 import { useToast } from '@/hooks/use-toast'
+import { useCompanySettings } from '@/contexts/SettingsContext'
 
 export default function QuoteDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { toast } = useToast()
+  const { settings: companySettings } = useCompanySettings()
 
   const [quote, setQuote] = useState<Quote | null>(null)
   const [items, setItems] = useState<QuoteItem[]>([])
@@ -87,7 +89,9 @@ export default function QuoteDetail() {
   // Produção Gráfica e Condições (campos livres e flexíveis)
   const [especificacoesGrafica, setEspecificacoesGrafica] = useState(ESPECIFICACOES_GRAFICAS_PADRAO)
   const [tiragens, setTiragens] = useState<GraficaTiragemRow[]>(TIRAGENS_PADRAO)
-  const [condicoesGerais, setCondicoesGerais] = useState(CONDICOES_PADRAO_EDITORA_OESTE)
+  const [condicoesGerais, setCondicoesGerais] = useState(
+    companySettings.texto_condicoes_padrao || CONDICOES_PADRAO_EDITORA_OESTE,
+  )
   const [isSavingGrafica, setIsSavingGrafica] = useState(false)
 
   // Formulário Inline de Novo Item Editorial com Autocomplete e Memória
@@ -117,7 +121,11 @@ export default function QuoteDetail() {
       )
       setEspecificacoesGrafica(q.grafica_especificacoes || ESPECIFICACOES_GRAFICAS_PADRAO)
       setTiragens(parseTiragens(q))
-      setCondicoesGerais(q.condicoes_gerais || CONDICOES_PADRAO_EDITORA_OESTE)
+      setCondicoesGerais(
+        q.condicoes_gerais ||
+          companySettings.texto_condicoes_padrao ||
+          CONDICOES_PADRAO_EDITORA_OESTE,
+      )
 
       const it = await getQuoteItems(id)
       setItems(it)
@@ -377,8 +385,9 @@ export default function QuoteDetail() {
     quote?.expand?.contact_id?.nome || quote?.expand?.lead_id?.nome || 'Cliente não identificado'
   const telefone = quote?.expand?.contact_id?.telefone || quote?.expand?.lead_id?.telefone || ''
 
+  const companyNome = companySettings?.nome_comercial || 'Editora Oeste'
   const waMsg = quote
-    ? `Olá ${clienteNome}! Segue anexa a nossa proposta comercial da Editora Oeste referente a "${quote.titulo}" (Ref. ${quote.codigo || 'ORC'}). Fico à disposição para esclarecer qualquer ponto!`
+    ? `Olá ${clienteNome}! Segue anexa a nossa proposta comercial da ${companyNome} referente a "${quote.titulo}" (Ref. ${quote.codigo || 'ORC'}). Fico à disposição para esclarecer qualquer ponto!`
     : ''
   const waUrl = telefone ? formatWhatsAppUrl(telefone, waMsg) : ''
 
@@ -807,8 +816,8 @@ export default function QuoteDetail() {
                   <span>Produção Gráfica (Impressão do Livro)</span>
                 </CardTitle>
                 <p className="text-xs text-[#8A8178] mt-0.5">
-                  Especificações técnicas livres e tabela de impressão por tiragem flexível (modelo
-                  Editora Oeste)
+                  Especificações técnicas livres e tabela de impressão por tiragem flexível (
+                  {companyNome})
                 </p>
               </div>
               <Button
@@ -1055,6 +1064,7 @@ export default function QuoteDetail() {
         especificacoesGrafica={especificacoesGrafica}
         condicoes={condicoesGerais}
         descontoPercentual={descontoPercentual}
+        companySettings={companySettings}
       />
 
       {/* Confirmação de Exclusão */}

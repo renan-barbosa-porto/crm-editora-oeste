@@ -1,6 +1,9 @@
-import type { Quote, QuoteItem, GraficaTiragemRow } from '@/types/crm'
+import type { Quote, QuoteItem, GraficaTiragemRow, CompanySettings } from '@/types/crm'
+import { DEFAULT_COMPANY_SETTINGS } from '@/services/settings'
 
-export const CONDICOES_PADRAO_EDITORA_OESTE = `1. Prazo de entrega: até 20 dias úteis após a aprovação final das fichas técnicas e prova digital (AF).
+export const CONDICOES_PADRAO_EDITORA_OESTE =
+  DEFAULT_COMPANY_SETTINGS.texto_condicoes_padrao ||
+  `1. Prazo de entrega: até 20 dias úteis após a aprovação final das fichas técnicas e prova digital (AF).
 2. Modelo de publicação: livro disponível no portal da Editora Oeste em regime de impressão sob demanda (POD).
 3. Lançamento e divulgação: eventos de lançamento e ações promocionais negociados à parte.
 4. Condições de pagamento: PIX à vista com 5% de desconto, ou cartão de crédito em até 3x sem juros.
@@ -67,8 +70,26 @@ export function buildProposalPrintHTML(params: {
   especificacoesGrafica: string
   condicoes: string
   descontoPercentual: number
+  companySettings?: Partial<CompanySettings>
 }): string {
-  const { quote, items, tiragens, especificacoesGrafica, condicoes, descontoPercentual } = params
+  const {
+    quote,
+    items,
+    tiragens,
+    especificacoesGrafica,
+    condicoes,
+    descontoPercentual,
+    companySettings,
+  } = params
+
+  const companyNome = companySettings?.nome_comercial || DEFAULT_COMPANY_SETTINGS.nome_comercial
+  const companyRazao = companySettings?.razao_social || DEFAULT_COMPANY_SETTINGS.razao_social
+  const companyCnpj = companySettings?.cnpj || DEFAULT_COMPANY_SETTINGS.cnpj
+  const companyCidade = companySettings?.cidade_uf || DEFAULT_COMPANY_SETTINGS.cidade_uf
+  const companyTelefone = companySettings?.telefone || DEFAULT_COMPANY_SETTINGS.telefone
+  const companyPortal = companySettings?.portal || DEFAULT_COMPANY_SETTINGS.portal
+  const companyValidadeDias =
+    companySettings?.validade_proposta_dias ?? DEFAULT_COMPANY_SETTINGS.validade_proposta_dias ?? 15
 
   const clienteNome = quote.expand?.contact_id?.nome || quote.expand?.lead_id?.nome || 'Cliente'
   const clienteEmail = quote.expand?.contact_id?.email || quote.expand?.lead_id?.email || ''
@@ -324,14 +345,14 @@ export function buildProposalPrintHTML(params: {
 </head>
 <body>
   <div class="page-container">
-    <!-- Cabeçalho com dados da empresa (Editora Oeste) e referência da proposta -->
+    <!-- Cabeçalho com dados da empresa e referência da proposta -->
     <div class="header-box">
       <div>
-        <h1 class="brand-title">Editora Oeste</h1>
+        <h1 class="brand-title">${escapeHtml(companyNome)}</h1>
         <p class="brand-sub">
-          <strong>Editora Oeste Comunicação & Gráfica Ltda.</strong><br>
-          CNPJ: 14.882.910/0001-35 • Campo Grande - MS<br>
-          Portal: editoraoeste.com.br • WhatsApp: (67) 99843-2210
+          <strong>${escapeHtml(companyRazao)}</strong><br>
+          ${companyCnpj ? `CNPJ: ${escapeHtml(companyCnpj)}` : ''}${companyCnpj && companyCidade ? ' • ' : ''}${companyCidade ? escapeHtml(companyCidade) : ''}<br>
+          ${companyPortal ? `Portal: ${escapeHtml(companyPortal)}` : ''}${companyPortal && companyTelefone ? ' • ' : ''}${companyTelefone ? `WhatsApp: ${escapeHtml(companyTelefone)}` : ''}
         </p>
       </div>
       <div class="proposal-meta">
@@ -434,7 +455,7 @@ export function buildProposalPrintHTML(params: {
 
     <div class="footer-note">
       <div>
-        <strong>Editora Oeste</strong> — Proposta válida por 15 dias a contar da data de emissão.
+        <strong>${escapeHtml(companyNome)}</strong> — Proposta válida por ${companyValidadeDias} dias a contar da data de emissão.
       </div>
       <div>
         Documento gerado eletronicamente em ${escapeHtml(dataHoje)}.
@@ -476,6 +497,7 @@ export function openProposalPdfWindow(params: {
   especificacoesGrafica: string
   condicoes: string
   descontoPercentual: number
+  companySettings?: Partial<CompanySettings>
   autoPrint?: boolean
 }) {
   const html = buildProposalPrintHTML(params)

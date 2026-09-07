@@ -25,6 +25,7 @@ import { NewQuoteModal } from '@/components/modals/NewQuoteModal'
 import { ProposalPdfModal } from '@/components/modals/ProposalPdfModal'
 import { cn } from '@/lib/utils'
 import { getPrazoDestaque, getQuoteDataEnvio } from '@/lib/quote-utils'
+import { useCompanySettings } from '@/contexts/SettingsContext'
 import {
   parseTiragens,
   ESPECIFICACOES_GRAFICAS_PADRAO,
@@ -35,6 +36,8 @@ import { useToast } from '@/hooks/use-toast'
 export default function Index() {
   const navigate = useNavigate()
   const { toast } = useToast()
+  const { settings: companySettings } = useCompanySettings()
+
   const [leads, setLeads] = useState<Lead[]>([])
   const [quotes, setQuotes] = useState<Quote[]>([])
   const [quoteValues, setQuoteValues] = useState<Record<string, number>>({})
@@ -183,7 +186,8 @@ export default function Index() {
         <div>
           <h1 className="font-serif text-2xl font-bold text-[#1E1B16]">Visão Geral Comercial</h1>
           <p className="text-sm text-[#8A8178] mt-1">
-            Editora Oeste • Acompanhamento de propostas, tiragens gráficas e funil de vendas
+            {companySettings.nome_comercial || 'Editora Oeste'} • Acompanhamento de propostas,
+            tiragens gráficas e funil de vendas
           </p>
         </div>
 
@@ -485,8 +489,13 @@ export default function Index() {
           especificacoesGrafica={
             selectedQuoteForPdf.grafica_especificacoes || ESPECIFICACOES_GRAFICAS_PADRAO
           }
-          condicoes={selectedQuoteForPdf.condicoes_gerais || CONDICOES_PADRAO_EDITORA_OESTE}
+          condicoes={
+            selectedQuoteForPdf.condicoes_gerais ||
+            companySettings.texto_condicoes_padrao ||
+            CONDICOES_PADRAO_EDITORA_OESTE
+          }
           descontoPercentual={selectedQuoteForPdf.desconto_percentual || 0}
+          companySettings={companySettings}
         />
       )}
     </div>

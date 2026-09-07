@@ -24,6 +24,7 @@ import { NewQuoteModal } from '@/components/modals/NewQuoteModal'
 import { ProposalPdfModal } from '@/components/modals/ProposalPdfModal'
 import { cn } from '@/lib/utils'
 import { getPrazoDestaque, getQuoteDataEnvio } from '@/lib/quote-utils'
+import { useCompanySettings } from '@/contexts/SettingsContext'
 import {
   parseTiragens,
   CONDICOES_PADRAO_EDITORA_OESTE,
@@ -34,6 +35,7 @@ import { useToast } from '@/hooks/use-toast'
 export default function Quotes() {
   const navigate = useNavigate()
   const { toast } = useToast()
+  const { settings: companySettings } = useCompanySettings()
   const [searchParams, setSearchParams] = useSearchParams()
 
   const [quotes, setQuotes] = useState<Quote[]>([])
@@ -612,8 +614,13 @@ export default function Quotes() {
           especificacoesGrafica={
             selectedQuoteForPdf.grafica_especificacoes || ESPECIFICACOES_GRAFICAS_PADRAO
           }
-          condicoes={selectedQuoteForPdf.condicoes_gerais || CONDICOES_PADRAO_EDITORA_OESTE}
+          condicoes={
+            selectedQuoteForPdf.condicoes_gerais ||
+            companySettings.texto_condicoes_padrao ||
+            CONDICOES_PADRAO_EDITORA_OESTE
+          }
           descontoPercentual={selectedQuoteForPdf.desconto_percentual || 0}
+          companySettings={companySettings}
         />
       )}
     </div>
