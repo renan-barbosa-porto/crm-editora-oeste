@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   getQuoteById,
   updateQuote,
   updateQuoteStatus,
+  deleteQuote,
   getQuoteItems,
   createQuoteItem,
   updateQuoteItem,
@@ -11,36 +12,48 @@ import {
 } from '@/services/quotes'
 import { getConversationsByLeadId, getConversationsByContactId } from '@/services/conversations'
 import { useRealtime } from '@/hooks/use-realtime'
-import type { Quote, QuoteItem, Conversation, QuoteStatus } from '@/types/crm'
+import {
+  searchItemSugestoes,
+  salvarItemNaMemoriaSeNovo,
+  type ItemSugestao,
+} from '@/services/catalog'
+import {
+  ESPECIFICACOES_GRAFICAS_PADRAO,
+  CONDICOES_PADRAO_EDITORA_OESTE,
+  TIRAGENS_PADRAO,
+  parseTiragens,
+} from '@/lib/pdf-generator'
+import { ProposalPdfModal } from '@/components/modals/ProposalPdfModal'
+import { CatalogManagerModal } from '@/components/modals/CatalogManagerModal'
+import type { Quote, QuoteItem, QuoteStatus, Conversation, GraficaTiragemRow } from '@/types/crm'
 import {
   ArrowLeft,
-  FileText,
-  User,
-  Phone,
-  Mail,
-  Building,
-  Plus,
-  Trash2,
-  CheckCircle2,
-  Clock,
-  Send,
-  XCircle,
-  MessageCircle,
   Calendar,
+  CheckCircle2,
+  Trash2,
+  Plus,
+  Send,
+  Printer,
+  MessageCircle,
+  FileText,
   AlertTriangle,
+  RotateCcw,
+  Sparkles,
+  BookOpen,
+  Snowflake,
+  ExternalLink,
 } from 'lucide-react'
-import { getPrazoDestaque, getQuoteDataEnvio, formatWhatsAppUrl } from '@/lib/quote-utils'
-import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -51,6 +64,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import { cn } from '@/lib/utils'
+import { getPrazoDestaque, getQuoteDataEnvio, formatWhatsAppUrl } from '@/lib/quote-utils'
 import { useToast } from '@/hooks/use-toast'
 
 export default function QuoteDetail() {
@@ -63,18 +78,32 @@ export default function QuoteDetail() {
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [loading, setLoading] = useState(true)
 
-  // Status update confirmation
-  const [confirmAprovarOpen, setConfirmAprovarOpen] = useState(false)
+  // Desconto e Edição de Cabeçalho
   const [descontoPercentual, setDescontoPercentual] = useState<number>(0)
+  const [titulo, setTitulo] = useState<string>('')
+  const [dataEnvio, setDataEnvio] = useState<string>('')
   const [isUpdatingDiscount, setIsUpdatingDiscount] = useState(false)
-  const [dataEnvioEdit, setDataEnvioEdit] = useState<string>('')
-  const [isUpdatingDataEnvio, setIsUpdatingDataEnvio] = useState(false)
 
-  // Novo item em adição
-  const [novaDescricao, setNovaDescricao] = useState('')
-  const [novaQtd, setNovaQtd] = useState(1)
-  const [novoValorUnit, setNovoValorUnit] = useState(0)
+  // Produção Gráfica e Condições (campos livres e flexíveis)
+  const [especificacoesGrafica, setEspecificacoesGrafica] = useState(ESPECIFICACOES_GRAFICAS_PADRAO)
+  const [tiragens, setTiragens] = useState<GraficaTiragemRow[]>(TIRAGENS_PADRAO)
+  const [condicoesGerais, setCondicoesGerais] = useState(CONDICOES_PADRAO_EDITORA_OESTE)
+  const [isSavingGrafica, setIsSavingGrafica] = useState(false)
+
+  // Formulário Inline de Novo Item Editorial com Autocomplete e Memória
+  const [newDescricao, setNewDescricao] = useState('')
+  const [newQuantidade, setNewQuantidade] = useState<number>(1)
+  const [newValorUnitario, setNewValorUnitario] = useState<number>(0)
   const [isAddingItem, setIsAddingItem] = useState(false)
+  const [sugestoesCache, setSugestoesCache] = useState<ItemSugestao[]>([])
+  const [showSugestoes, setShowSugestoes] = useState(false)
+
+  // Modal de PDF / WhatsApp
+  const [pdfModalOpen, setPdfModalOpen] = useState(false)
+  const [catalogModalOpen, setCatalogModalOpen] = useState(false)
+
+  // Diálogo de confirmação de exclusão
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
 
   const loadData = async () => {
     if (!id) return
@@ -82,24 +111,29 @@ export default function QuoteDetail() {
       const q = await getQuoteById(id)
       setQuote(q)
       setDescontoPercentual(q.desconto_percentual || 0)
-      if (q.data_envio) {
-        setDataEnvioEdit(q.data_envio.slice(0, 10))
-      } else if (q.created) {
-        setDataEnvioEdit(q.created.slice(0, 10))
-      }
+      setTitulo(q.titulo)
+      setDataEnvio(
+        q.data_envio ? q.data_envio.slice(0, 10) : new Date(q.created).toISOString().slice(0, 10),
+      )
+      setEspecificacoesGrafica(q.grafica_especificacoes || ESPECIFICACOES_GRAFICAS_PADRAO)
+      setTiragens(parseTiragens(q))
+      setCondicoesGerais(q.condicoes_gerais || CONDICOES_PADRAO_EDITORA_OESTE)
 
-      const qItems = await getQuoteItems(id)
-      setItems(qItems)
+      const it = await getQuoteItems(id)
+      setItems(it)
 
-      // Conversas do lead ou contato
-      let convs: Conversation[] = []
       if (q.lead_id) {
-        convs = await getConversationsByLeadId(q.lead_id)
+        const convs = await getConversationsByLeadId(q.lead_id)
+        setConversations(convs)
       } else if (q.contact_id) {
-        convs = await getConversationsByContactId(q.contact_id)
+        const convs = await getConversationsByContactId(q.contact_id)
+        setConversations(convs)
       }
-      setConversations(convs)
-    } catch {
+
+      // Pré-carregar catálogo inicial
+      searchItemSugestoes('').then(setSugestoesCache)
+    } catch (err) {
+      console.error('Erro ao carregar orçamento:', err)
       toast({
         title: 'Orçamento não encontrado',
         variant: 'destructive',
@@ -121,49 +155,63 @@ export default function QuoteDetail() {
     if (id) getQuoteItems(id).then(setItems)
   })
 
-  // Cálculos de Totais
-  const subtotal = items.reduce(
-    (acc, it) => acc + (it.quantidade || 0) * (it.valor_unitario || 0),
-    0,
-  )
-  const valorDesconto = (subtotal * (Number(descontoPercentual) || 0)) / 100
-  const valorTotal = Math.max(0, subtotal - valorDesconto)
-
-  const handleSaveDataEnvio = async () => {
-    if (!id || !dataEnvioEdit) return
-    setIsUpdatingDataEnvio(true)
+  // Mudança de Status
+  const handleStatusChange = async (newStatus: QuoteStatus) => {
+    if (!id || !quote) return
     try {
-      const updated = await updateQuote(id, {
-        data_envio: `${dataEnvioEdit} 12:00:00`,
-      })
-      setQuote(updated)
+      await updateQuoteStatus(id, newStatus)
+      setQuote({ ...quote, status: newStatus })
       toast({
-        title: 'Data de envio atualizada',
-        description: 'A nova data foi salva com sucesso.',
+        title: 'Status atualizado',
+        description: `Orçamento agora está "${newStatus}". O estágio do lead foi sincronizado automaticamente se aplicável.`,
       })
     } catch {
       toast({
-        title: 'Erro ao atualizar data de envio',
+        title: 'Erro ao atualizar status',
         variant: 'destructive',
       })
-    } finally {
-      setIsUpdatingDataEnvio(false)
     }
   }
 
-  const handleApplyDiscount = async () => {
-    if (!id) return
-    setIsUpdatingDiscount(true)
+  // Reativar orçamento esfriado
+  const handleReativar = async () => {
+    await handleStatusChange('Enviado')
+  }
+
+  // Salvar Título e Data de Envio
+  const handleSaveHeader = async () => {
+    if (!id || !quote) return
     try {
       await updateQuote(id, {
-        desconto_percentual: Number(descontoPercentual) || 0,
+        titulo: titulo.trim() || quote.titulo,
+        data_envio: dataEnvio ? `${dataEnvio} 12:00:00` : undefined,
       })
       toast({
-        title: 'Desconto atualizado',
+        title: 'Informações salvas',
+        description: 'Título e data de envio foram atualizados.',
       })
     } catch {
       toast({
-        title: 'Erro ao salvar desconto',
+        title: 'Erro ao salvar',
+        variant: 'destructive',
+      })
+    }
+  }
+
+  // Salvar Desconto
+  const handleSaveDiscount = async () => {
+    if (!id || !quote) return
+    setIsUpdatingDiscount(true)
+    try {
+      await updateQuote(id, { desconto_percentual: descontoPercentual })
+      setQuote({ ...quote, desconto_percentual: descontoPercentual })
+      toast({
+        title: 'Desconto atualizado',
+        description: `Desconto de ${descontoPercentual}% aplicado ao subtotal editorial.`,
+      })
+    } catch {
+      toast({
+        title: 'Erro ao atualizar desconto',
         variant: 'destructive',
       })
     } finally {
@@ -171,26 +219,107 @@ export default function QuoteDetail() {
     }
   }
 
+  // Salvar Produção Gráfica e Condições Gerais
+  const handleSaveGraficaECondicoes = async () => {
+    if (!id) return
+    setIsSavingGrafica(true)
+    try {
+      await updateQuote(id, {
+        grafica_especificacoes: especificacoesGrafica.trim(),
+        grafica_tiragens: tiragens,
+        condicoes_gerais: condicoesGerais.trim(),
+      })
+      toast({
+        title: 'Produção gráfica salva!',
+        description: 'Especificações, tiragens e condições foram atualizadas.',
+      })
+    } catch {
+      toast({
+        title: 'Erro ao salvar produção gráfica',
+        variant: 'destructive',
+      })
+    } finally {
+      setIsSavingGrafica(false)
+    }
+  }
+
+  // Tiragens handlers
+  const handleAddTiragemRow = () => {
+    setTiragens((prev) => [
+      ...prev,
+      {
+        tiragem: 200,
+        descricao: '200 exemplares',
+        valor_unitario: 16.0,
+        valor_total: 3200.0,
+      },
+    ])
+  }
+
+  const handleRemoveTiragemRow = (idx: number) => {
+    setTiragens((prev) => prev.filter((_, i) => i !== idx))
+  }
+
+  const handleUpdateTiragemRow = (idx: number, field: keyof GraficaTiragemRow, val: any) => {
+    const updated = [...tiragens]
+    const row = { ...updated[idx], [field]: val }
+    if (field === 'tiragem' || field === 'valor_unitario') {
+      const tir = field === 'tiragem' ? Number(val) || 0 : Number(row.tiragem) || 0
+      const unit = field === 'valor_unitario' ? Number(val) || 0 : Number(row.valor_unitario) || 0
+      row.valor_total = tir * unit
+      if (!row.descricao || row.descricao.includes('exemplar')) {
+        row.descricao = `${tir} ${tir === 1 ? 'exemplar' : 'exemplares'}`
+      }
+    }
+    updated[idx] = row
+    setTiragens(updated)
+  }
+
+  // Autocomplete ao digitar item
+  const handleDescricaoChange = async (val: string) => {
+    setNewDescricao(val)
+    if (val.trim().length >= 1) {
+      const sugs = await searchItemSugestoes(val)
+      setSugestoesCache(sugs)
+      setShowSugestoes(true)
+    } else {
+      setShowSugestoes(false)
+    }
+  }
+
+  const handleSelectSugestao = (sug: ItemSugestao) => {
+    setNewDescricao(sug.nome)
+    setNewValorUnitario(sug.valor_unitario || 0)
+    setShowSugestoes(false)
+  }
+
+  // Adicionar Item Editorial
   const handleAddItem = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!id || !novaDescricao.trim()) return
+    if (!id || !newDescricao.trim()) return
 
     setIsAddingItem(true)
     try {
-      await createQuoteItem({
+      const newItem = await createQuoteItem({
         quote_id: id,
-        descricao: novaDescricao.trim(),
-        quantidade: Math.max(1, Number(novaQtd) || 1),
-        valor_unitario: Math.max(0, Number(novoValorUnit) || 0),
-        desconto_percentual: 0,
+        descricao: newDescricao.trim(),
+        quantidade: newQuantidade || 1,
+        valor_unitario: newValorUnitario || 0,
       })
-      setNovaDescricao('')
-      setNovaQtd(1)
-      setNovoValorUnit(0)
-      const updatedItems = await getQuoteItems(id)
-      setItems(updatedItems)
+
+      setItems([...items, newItem])
+
+      // Salva no catálogo para memória futura
+      salvarItemNaMemoriaSeNovo(newDescricao.trim(), newValorUnitario)
+
+      setNewDescricao('')
+      setNewQuantidade(1)
+      setNewValorUnitario(0)
+      setShowSugestoes(false)
+
       toast({
-        title: 'Item adicionado ao orçamento',
+        title: 'Item editorial adicionado',
+        description: 'Item inserido e salvo na memória para futuras propostas.',
       })
     } catch {
       toast({
@@ -202,121 +331,76 @@ export default function QuoteDetail() {
     }
   }
 
-  const handleRemoveItem = async (itemId: string) => {
+  // Excluir Item
+  const handleDeleteItem = async (itemId: string) => {
     try {
       await deleteQuoteItem(itemId)
-      setItems((prev) => prev.filter((i) => i.id !== itemId))
+      setItems(items.filter((it) => it.id !== itemId))
       toast({
         title: 'Item removido',
       })
     } catch {
       toast({
-        title: 'Erro ao remover item',
+        title: 'Erro ao excluir item',
         variant: 'destructive',
       })
     }
   }
 
-  const handleChangeStatus = async (novoStatus: QuoteStatus) => {
-    if (!id) return
-    if (novoStatus === 'Aprovado') {
-      setConfirmAprovarOpen(true)
-      return
-    }
-
-    try {
-      const updated = await updateQuoteStatus(id, novoStatus)
-      setQuote(updated)
-      toast({
-        title: `Status alterado para "${novoStatus}"`,
-      })
-    } catch {
-      toast({
-        title: 'Erro ao alterar status',
-        variant: 'destructive',
-      })
-    }
-  }
-
-  const confirmAprovacao = async () => {
+  // Excluir Orçamento Inteiro
+  const handleDeleteQuote = async () => {
     if (!id) return
     try {
-      const updated = await updateQuoteStatus(id, 'Aprovado')
-      setQuote(updated)
+      await deleteQuote(id)
       toast({
-        title: 'Orçamento Aprovado!',
-        description: 'Parabéns pela conversão da proposta em pedido.',
+        title: 'Orçamento excluído com sucesso!',
       })
+      navigate('/orcamentos')
     } catch {
       toast({
-        title: 'Erro ao aprovar orçamento',
+        title: 'Erro ao excluir orçamento',
         variant: 'destructive',
       })
     }
   }
 
-  const handleQuickEditDraft = async () => {
-    if (!id || !quote) return
-    // "Editar (fixa o status para 'Enviado' se estava em 'Rascunho')"
-    if (quote.status === 'Rascunho') {
-      try {
-        const updated = await updateQuoteStatus(id, 'Enviado')
-        setQuote(updated)
-        toast({
-          title: 'Orçamento marcado como Enviado',
-        })
-      } catch {
-        toast({
-          title: 'Erro ao atualizar',
-          variant: 'destructive',
-        })
-      }
-    }
-  }
+  // Subtotais Parte 1
+  const subtotal = items.reduce(
+    (acc, it) => acc + (it.quantidade || 0) * (it.valor_unitario || 0),
+    0,
+  )
+  const valorDesconto = (subtotal * (descontoPercentual || 0)) / 100
+  const totalEditorialLiquido = Math.max(0, subtotal - valorDesconto)
 
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'Rascunho':
-        return (
-          <Badge variant="outline" className="border-[#8A8178] text-[#8A8178] bg-[#F7F5F2]">
-            Rascunho
-          </Badge>
-        )
-      case 'Enviado':
-        return <Badge className="bg-[#2B5F8A] text-white">Enviado</Badge>
-      case 'Visualizado':
-        return <Badge className="bg-[#C07A1B] text-white font-semibold">Visualizado</Badge>
-      case 'Aprovado':
-        return <Badge className="bg-[#2F7D4F] text-white">Aprovado</Badge>
-      case 'Rejeitado':
-        return <Badge className="bg-[#B3261E] text-white">Rejeitado</Badge>
-      default:
-        return <Badge variant="secondary">{status}</Badge>
-    }
-  }
+  const prazo = quote ? getPrazoDestaque(quote) : null
+  const clienteNome =
+    quote?.expand?.contact_id?.nome || quote?.expand?.lead_id?.nome || 'Cliente não identificado'
+  const telefone = quote?.expand?.contact_id?.telefone || quote?.expand?.lead_id?.telefone || ''
+
+  const waMsg = quote
+    ? `Olá ${clienteNome}! Segue anexa a nossa proposta comercial da Editora Oeste referente a "${quote.titulo}" (Ref. ${quote.codigo || 'ORC'}). Fico à disposição para esclarecer qualquer ponto!`
+    : ''
+  const waUrl = telefone ? formatWhatsAppUrl(telefone, waMsg) : ''
 
   if (loading || !quote) {
     return (
       <div className="flex h-64 items-center justify-center">
         <div className="flex flex-col items-center gap-2">
           <div className="h-8 w-8 animate-spin rounded-full border-4 border-[#B3541E] border-t-transparent" />
-          <p className="text-sm font-serif text-[#8A8178]">Carregando Detalhes do Orçamento...</p>
+          <p className="text-sm font-serif text-[#8A8178]">Carregando Proposta...</p>
         </div>
       </div>
     )
   }
 
-  // Dados do cliente relacionados
-  const clienteNome =
-    quote.expand?.contact_id?.nome || quote.expand?.lead_id?.nome || 'Cliente não informado'
-  const clienteEmpresa = quote.expand?.contact_id?.empresa || quote.expand?.lead_id?.empresa
-  const clienteTelefone = quote.expand?.contact_id?.telefone || quote.expand?.lead_id?.telefone
-  const clienteEmail = quote.expand?.contact_id?.email || quote.expand?.lead_id?.email
+  const isEsfriado = quote.status === 'Esfriou'
+  const isPendente =
+    quote.status === 'Rascunho' || quote.status === 'Enviado' || quote.status === 'Visualizado'
 
   return (
     <div className="space-y-6">
       {/* Botão Voltar */}
-      <div>
+      <div className="flex items-center gap-2">
         <Button
           variant="ghost"
           size="sm"
@@ -324,153 +408,609 @@ export default function QuoteDetail() {
           className="text-[#8A8178] hover:text-[#1E1B16] -ml-2 h-8"
         >
           <ArrowLeft className="w-4 h-4 mr-1" />
-          Voltar para Orçamentos
+          Voltar para Lista de Orçamentos
         </Button>
       </div>
 
-      {/* Cabeçalho do Orçamento */}
+      {/* Banner de Prazo Urgente se houver */}
+      {prazo && (
+        <div
+          className={cn(
+            'p-3.5 rounded-lg border flex items-center justify-between gap-3 text-xs sm:text-sm',
+            prazo.bgHighlightClass,
+            prazo.cardBorderClass,
+          )}
+        >
+          <div className="flex items-center gap-2.5">
+            <AlertTriangle className="w-4 h-4 flex-shrink-0 text-[#B3541E]" />
+            <span className="font-semibold text-[#1E1B16]">Acompanhamento:</span>
+            <Badge className={cn('text-[10px] px-1.5 py-0.2', prazo.badgeClass)}>
+              {prazo.label}
+            </Badge>
+          </div>
+          <span className="text-xs text-[#8A8178] hidden sm:inline">Status: {quote.status}</span>
+        </div>
+      )}
+
+      {/* Cabeçalho da Proposta */}
       <div className="bg-white p-5 rounded-lg border border-[#E5DFD6] shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2 text-xs font-mono font-semibold text-[#8A8178]">
-            <span>{quote.codigo || 'ORC-TEMP'}</span>
-            <span>•</span>
-            <span>
-              Criado em{' '}
-              {new Date(quote.created).toLocaleDateString('pt-BR', {
-                day: '2-digit',
-                month: '2-digit',
-                year: 'numeric',
-              })}
+          <div className="flex items-center gap-2 flex-wrap mb-1">
+            <span className="font-mono text-xs px-2 py-0.5 rounded bg-[#FAF8F5] text-[#B3541E] border border-[#E5DFD6] font-bold">
+              {quote.codigo || 'ORC-TEMP'}
             </span>
-            {(() => {
-              const dt = getQuoteDataEnvio(quote)
-              if (!dt) return null
-              return (
-                <>
-                  <span>•</span>
-                  <span>
-                    Enviado em{' '}
-                    {dt.toLocaleDateString('pt-BR', {
-                      day: '2-digit',
-                      month: '2-digit',
-                      year: 'numeric',
-                    })}
-                  </span>
-                </>
-              )
-            })()}
+            <span className="text-xs text-[#8A8178]">
+              Cliente: <strong className="text-[#1E1B16]">{clienteNome}</strong>
+            </span>
+            {isEsfriado && (
+              <Badge
+                variant="outline"
+                className="border-slate-400 text-slate-700 bg-slate-100 flex items-center gap-1"
+              >
+                <Snowflake className="w-3 h-3 text-slate-500" />
+                Orçamento Esfriado
+              </Badge>
+            )}
           </div>
-          <div className="flex items-center gap-3 mt-1 flex-wrap">
-            <h1 className="font-serif text-2xl font-bold text-[#1E1B16]">{quote.titulo}</h1>
-            {getStatusBadge(quote.status)}
-            {(() => {
-              const prazo = getPrazoDestaque(quote)
-              if (!prazo) return null
-              return (
-                <Badge className={cn('text-xs px-2.5 py-0.5', prazo.badgeClass)}>
-                  {prazo.urgencia === 'urgente' && (
-                    <AlertTriangle className="w-3 h-3 mr-1 inline" />
-                  )}
-                  {prazo.label}
-                </Badge>
-              )
-            })()}
-          </div>
+          <h1 className="font-serif text-2xl font-bold text-[#1E1B16]">{quote.titulo}</h1>
         </div>
 
+        {/* Barra de Ações Rápidas: PDF da Proposta, WhatsApp e Status */}
         <div className="flex items-center gap-2 flex-wrap">
-          {quote.status === 'Rascunho' && (
+          {/* Botão Gerar PDF Oficial */}
+          <Button
+            onClick={() => setPdfModalOpen(true)}
+            className="bg-[#B3541E] hover:bg-[#9A4618] text-white flex items-center gap-1.5 h-9"
+          >
+            <Printer className="w-4 h-4" />
+            Gerar PDF da Proposta
+          </Button>
+
+          {/* Botão WhatsApp com Orientação */}
+          {waUrl && (
             <Button
               variant="outline"
-              size="sm"
-              onClick={handleQuickEditDraft}
-              className="border-[#E5DFD6] text-[#2B5F8A] hover:bg-[#F0F5FA]"
+              onClick={() => setPdfModalOpen(true)}
+              className="border-[#2F7D4F] text-[#2F7D4F] hover:bg-[#2F7D4F]/10 flex items-center gap-1.5 h-9"
+              title="Abre modal com opções de download do PDF e envio no WhatsApp"
             >
-              <Send className="w-3.5 h-3.5 mr-1.5" />
-              Marcar como Enviado
+              <MessageCircle className="w-4 h-4" />
+              Enviar por WhatsApp
             </Button>
           )}
 
-          {/* Menu Atualizar Status */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button size="sm" className="bg-[#B3541E] hover:bg-[#9A4618] text-white">
-                Atualizar Status
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="bg-white border-[#E5DFD6]">
-              <DropdownMenuItem onClick={() => handleChangeStatus('Enviado')}>
-                <Send className="w-4 h-4 mr-2 text-[#2B5F8A]" />
-                Enviado
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => handleChangeStatus('Visualizado')}>
-                <Clock className="w-4 h-4 mr-2 text-[#C07A1B]" />
-                Visualizado
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => handleChangeStatus('Aprovado')}>
-                <CheckCircle2 className="w-4 h-4 mr-2 text-[#2F7D4F]" />
-                Aprovado
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => handleChangeStatus('Rejeitado')}>
-                <XCircle className="w-4 h-4 mr-2 text-[#B3261E]" />
-                Rejeitado
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          {/* Reativar se estiver Esfriado */}
+          {isEsfriado ? (
+            <Button
+              onClick={handleReativar}
+              className="bg-[#2B5F8A] hover:bg-[#214b6e] text-white flex items-center gap-1.5 h-9"
+            >
+              <RotateCcw className="w-4 h-4" />
+              Reativar Orçamento
+            </Button>
+          ) : isPendente ? (
+            <Button
+              variant="outline"
+              onClick={() => handleStatusChange('Esfriou')}
+              className="border-slate-300 text-slate-600 hover:bg-slate-100 flex items-center gap-1.5 h-9"
+              title="Mover este orçamento para a aba Esfriados"
+            >
+              <Snowflake className="w-4 h-4 text-slate-500" />
+              Esfriar
+            </Button>
+          ) : null}
+
+          {/* Acesso ao Catálogo Global */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setCatalogModalOpen(true)}
+            className="border-[#E5DFD6] text-[#4A4238] hover:bg-[#FAF8F5] flex items-center gap-1.5 h-9"
+          >
+            <BookOpen className="w-3.5 h-3.5 text-[#B3541E]" />
+            Catálogo
+          </Button>
+
+          {/* Seletor de Status */}
+          <div className="w-36">
+            <Select
+              value={quote.status}
+              onValueChange={(val) => handleStatusChange(val as QuoteStatus)}
+            >
+              <SelectTrigger className="border-[#E5DFD6] h-9">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="Rascunho">Rascunho</SelectItem>
+                <SelectItem value="Enviado">Enviado</SelectItem>
+                <SelectItem value="Visualizado">Visualizado</SelectItem>
+                <SelectItem value="Aprovado">Aprovado</SelectItem>
+                <SelectItem value="Rejeitado">Rejeitado</SelectItem>
+                <SelectItem value="Esfriou">Esfriou</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setDeleteConfirmOpen(true)}
+            className="text-[#8A8178] hover:text-[#B3261E] h-9 w-9"
+            title="Excluir orçamento"
+          >
+            <Trash2 className="w-4 h-4" />
+          </Button>
         </div>
       </div>
 
-      {/* Grid: Informações do Cliente + Tabela de Itens */}
+      {/* Grid de Conteúdo Principal */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* Card Dados do Cliente (4 cols) */}
-        <div className="lg:col-span-4 space-y-4">
+        {/* Coluna Esquerda: Itens Editoriais + Produção Gráfica (8 cols) */}
+        <div className="lg:col-span-8 space-y-6">
+          {/* Card: Parte 1 — Produção Editorial */}
           <Card className="bg-white border-[#E5DFD6] shadow-sm">
-            <CardHeader className="p-4 pb-2 border-b border-[#E5DFD6]">
+            <CardHeader className="p-4 border-b border-[#E5DFD6] flex flex-row items-center justify-between">
+              <div>
+                <CardTitle className="font-serif text-base font-bold text-[#1E1B16] flex items-center gap-2">
+                  <span className="bg-[#B3541E] text-white text-[10px] px-1.5 py-0.5 rounded font-mono">
+                    PARTE 1
+                  </span>
+                  <span>Produção Editorial</span>
+                </CardTitle>
+                <p className="text-xs text-[#8A8178] mt-0.5">
+                  ISBN, Capa, Diagramação InDesign, Revisão e Kindle (autocomplete busca no catálogo
+                  e no histórico)
+                </p>
+              </div>
+            </CardHeader>
+
+            <CardContent className="p-4 space-y-4">
+              {/* Tabela de Itens */}
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs sm:text-sm">
+                  <thead className="bg-[#FAF8F5] border-b border-[#E5DFD6] text-[#8A8178] font-semibold text-[11px] uppercase">
+                    <tr>
+                      <th className="py-2.5 px-3">Item / Serviço Editorial</th>
+                      <th className="py-2.5 px-3 text-center w-16">Qtd</th>
+                      <th className="py-2.5 px-3 text-right w-28">Valor Unit.</th>
+                      <th className="py-2.5 px-3 text-right w-28">Subtotal</th>
+                      <th className="py-2.5 px-2 text-center w-10"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#E5DFD6]">
+                    {items.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="py-8 text-center text-xs text-[#8A8178]">
+                          Nenhum item editorial inserido. Adicione no formulário abaixo.
+                        </td>
+                      </tr>
+                    ) : (
+                      items.map((it, idx) => (
+                        <tr key={it.id} className="hover:bg-[#FAF8F5]">
+                          <td className="py-3 px-3 font-medium text-[#1E1B16]">
+                            <span className="text-[#8A8178] mr-1.5 font-mono text-xs">
+                              {idx + 1}.
+                            </span>
+                            {it.descricao}
+                          </td>
+                          <td className="py-3 px-3 text-center text-[#4A4238]">{it.quantidade}</td>
+                          <td className="py-3 px-3 text-right font-mono text-[#1E1B16]">
+                            {(it.valor_unitario || 0).toLocaleString('pt-BR', {
+                              style: 'currency',
+                              currency: 'BRL',
+                            })}
+                          </td>
+                          <td className="py-3 px-3 text-right font-mono font-bold text-[#B3541E]">
+                            {((it.quantidade || 0) * (it.valor_unitario || 0)).toLocaleString(
+                              'pt-BR',
+                              {
+                                style: 'currency',
+                                currency: 'BRL',
+                              },
+                            )}
+                          </td>
+                          <td className="py-3 px-2 text-center">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleDeleteItem(it.id)}
+                              className="h-7 w-7 text-[#8A8178] hover:text-[#B3261E]"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Formulário Inline para Adicionar Novo Item Editorial com Autocomplete */}
+              <form
+                onSubmit={handleAddItem}
+                className="bg-[#FAF8F5] p-3 rounded-md border border-[#E5DFD6] space-y-2"
+              >
+                <div className="flex items-center justify-between text-xs font-semibold text-[#1E1B16]">
+                  <span className="flex items-center gap-1">
+                    <Plus className="w-3.5 h-3.5 text-[#B3541E]" />
+                    Adicionar Serviço Editorial
+                  </span>
+                  <span className="text-[11px] text-[#8A8178] font-normal">
+                    Sugestões aparecem ao digitar
+                  </span>
+                </div>
+
+                <div className="relative">
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <div className="relative flex-1">
+                      <Input
+                        value={newDescricao}
+                        onChange={(e) => handleDescricaoChange(e.target.value)}
+                        onFocus={() => {
+                          if (newDescricao.trim()) setShowSugestoes(true)
+                        }}
+                        placeholder="Nome do serviço (ex: ISBN, Revisão textual, Diagramação...)"
+                        className="text-xs h-9 bg-white border-[#E5DFD6]"
+                      />
+
+                      {/* Dropdown de Autocomplete com Memória */}
+                      {showSugestoes && sugestoesCache.length > 0 && (
+                        <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-[#E5DFD6] rounded-md shadow-lg z-30 max-h-52 overflow-y-auto divide-y divide-[#FAF8F5]">
+                          <div className="p-1.5 bg-[#FAF8F5] text-[10px] font-bold uppercase text-[#8A8178] flex items-center justify-between">
+                            <span className="flex items-center gap-1">
+                              <Sparkles className="w-3 h-3 text-[#B3541E]" />
+                              Sugestões da memória do catálogo:
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setShowSugestoes(false)}
+                              className="text-gray-400 hover:text-gray-600"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                          {sugestoesCache.map((sug) => (
+                            <div
+                              key={sug.id}
+                              onMouseDown={(e) => {
+                                e.preventDefault()
+                                handleSelectSugestao(sug)
+                              }}
+                              className="p-2 hover:bg-[#FAF8F5] cursor-pointer text-xs flex items-center justify-between gap-2"
+                            >
+                              <div className="min-w-0 flex-1">
+                                <div className="font-semibold text-[#1E1B16] line-clamp-1">
+                                  {sug.nome}
+                                </div>
+                                {sug.descricao && (
+                                  <div className="text-[11px] text-[#8A8178] line-clamp-1">
+                                    {sug.descricao}
+                                  </div>
+                                )}
+                              </div>
+                              <div className="text-right font-mono font-bold text-xs text-[#B3541E] flex-shrink-0">
+                                {sug.valor_unitario > 0
+                                  ? sug.valor_unitario.toLocaleString('pt-BR', {
+                                      style: 'currency',
+                                      currency: 'BRL',
+                                    })
+                                  : 'A combinar'}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="w-full sm:w-20">
+                      <Input
+                        type="number"
+                        min="1"
+                        value={newQuantidade}
+                        onChange={(e) =>
+                          setNewQuantidade(Math.max(1, parseInt(e.target.value) || 1))
+                        }
+                        placeholder="Qtd"
+                        className="text-xs h-9 bg-white text-center border-[#E5DFD6]"
+                      />
+                    </div>
+
+                    <div className="w-full sm:w-28">
+                      <Input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={newValorUnitario}
+                        onChange={(e) => setNewValorUnitario(parseFloat(e.target.value) || 0)}
+                        placeholder="R$ Unit."
+                        className="text-xs h-9 bg-white text-right border-[#E5DFD6]"
+                      />
+                    </div>
+
+                    <Button
+                      type="submit"
+                      disabled={isAddingItem || !newDescricao.trim()}
+                      className="bg-[#B3541E] hover:bg-[#9A4618] text-white text-xs h-9 px-4"
+                    >
+                      Adicionar
+                    </Button>
+                  </div>
+                </div>
+              </form>
+
+              {/* Box de Subtotais da Parte 1 */}
+              <div className="bg-[#FAF8F5] p-3 rounded-md border border-[#E5DFD6] flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 text-xs">
+                <div className="flex items-center gap-2">
+                  <span className="text-[#8A8178]">Desconto Comercial (%):</span>
+                  <Input
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={descontoPercentual}
+                    onChange={(e) =>
+                      setDescontoPercentual(
+                        Math.min(100, Math.max(0, parseFloat(e.target.value) || 0)),
+                      )
+                    }
+                    className="w-16 h-7 text-xs border-[#E5DFD6] bg-white font-mono"
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleSaveDiscount}
+                    disabled={isUpdatingDiscount}
+                    className="h-7 text-xs border-[#E5DFD6] text-[#4A4238] hover:bg-white"
+                  >
+                    {isUpdatingDiscount ? 'Aplicando...' : 'Aplicar'}
+                  </Button>
+                </div>
+
+                <div className="text-right space-y-0.5">
+                  <div className="text-[#8A8178]">
+                    Subtotal Bruto:{' '}
+                    <strong>
+                      {subtotal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                    </strong>
+                  </div>
+                  {valorDesconto > 0 && (
+                    <div className="text-[#B3261E]">
+                      Desconto ({descontoPercentual}%): -
+                      {valorDesconto.toLocaleString('pt-BR', {
+                        style: 'currency',
+                        currency: 'BRL',
+                      })}
+                    </div>
+                  )}
+                  <div className="text-sm font-bold text-[#B3541E] font-serif">
+                    Total Editorial Líquido:{' '}
+                    <span className="font-mono">
+                      {totalEditorialLiquido.toLocaleString('pt-BR', {
+                        style: 'currency',
+                        currency: 'BRL',
+                      })}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Card: Parte 2 — Produção Gráfica (Impressão do Livro) */}
+          <Card className="bg-white border-[#E5DFD6] shadow-sm">
+            <CardHeader className="p-4 border-b border-[#E5DFD6] flex flex-row items-center justify-between">
+              <div>
+                <CardTitle className="font-serif text-base font-bold text-[#1E1B16] flex items-center gap-2">
+                  <span className="bg-[#B3541E] text-white text-[10px] px-1.5 py-0.5 rounded font-mono">
+                    PARTE 2
+                  </span>
+                  <span>Produção Gráfica (Impressão do Livro)</span>
+                </CardTitle>
+                <p className="text-xs text-[#8A8178] mt-0.5">
+                  Especificações técnicas livres e tabela de impressão por tiragem flexível (modelo
+                  Editora Oeste)
+                </p>
+              </div>
+              <Button
+                size="sm"
+                onClick={handleSaveGraficaECondicoes}
+                disabled={isSavingGrafica}
+                className="bg-[#B3541E] hover:bg-[#9A4618] text-white text-xs h-8"
+              >
+                {isSavingGrafica ? 'Salvando...' : 'Salvar Produção Gráfica'}
+              </Button>
+            </CardHeader>
+
+            <CardContent className="p-4 space-y-4">
+              <div>
+                <label className="text-[11px] font-bold uppercase tracking-wider text-[#1E1B16] block mb-1">
+                  Especificações Técnicas da Impressão (Texto Livre)
+                </label>
+                <textarea
+                  value={especificacoesGrafica}
+                  onChange={(e) => setEspecificacoesGrafica(e.target.value)}
+                  rows={4}
+                  className="w-full p-2.5 text-xs border border-[#E5DFD6] rounded bg-[#FAF8F5] text-[#1E1B16] focus:outline-none focus:ring-1 focus:ring-[#B3541E] font-sans leading-relaxed"
+                  placeholder="Ex: Livro até 72 páginas, formato 155x225mm fechado, miolo P&B..."
+                />
+              </div>
+
+              {/* Tabela de Tiragens Flexíveis */}
+              <div className="space-y-2 pt-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-[#1E1B16]">
+                    Tabela de Impressão por Tiragem (Flexível)
+                  </span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleAddTiragemRow}
+                    className="h-7 text-xs border-[#E5DFD6] text-[#B3541E] hover:bg-[#FAF8F5]"
+                  >
+                    <Plus className="w-3.5 h-3.5 mr-1" />
+                    Adicionar Linha de Tiragem
+                  </Button>
+                </div>
+
+                <div className="space-y-1.5">
+                  {tiragens.map((row, idx) => (
+                    <div
+                      key={idx}
+                      className="flex items-center gap-2 bg-[#FAF8F5] p-2 rounded border border-[#E5DFD6]"
+                    >
+                      <div className="w-20">
+                        <Input
+                          type="number"
+                          min="1"
+                          placeholder="Tiragem"
+                          value={row.tiragem}
+                          onChange={(e) =>
+                            handleUpdateTiragemRow(
+                              idx,
+                              'tiragem',
+                              Math.max(1, parseInt(e.target.value) || 1),
+                            )
+                          }
+                          className="text-xs h-8 bg-white border-[#E5DFD6]"
+                        />
+                      </div>
+                      <div className="flex-1">
+                        <Input
+                          placeholder="Descrição (ex: 50 exemplares)"
+                          value={row.descricao}
+                          onChange={(e) => handleUpdateTiragemRow(idx, 'descricao', e.target.value)}
+                          className="text-xs h-8 bg-white border-[#E5DFD6]"
+                        />
+                      </div>
+                      <div className="w-28">
+                        <Input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          placeholder="Preço/un"
+                          value={row.valor_unitario}
+                          onChange={(e) =>
+                            handleUpdateTiragemRow(
+                              idx,
+                              'valor_unitario',
+                              parseFloat(e.target.value) || 0,
+                            )
+                          }
+                          className="text-xs h-8 bg-white text-right border-[#E5DFD6]"
+                        />
+                      </div>
+                      <div className="w-28 text-right font-mono font-bold text-xs text-[#1E1B16] pr-1">
+                        {(
+                          (Number(row.tiragem) || 0) * (Number(row.valor_unitario) || 0)
+                        ).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleRemoveTiragemRow(idx)}
+                        className="h-7 w-7 text-[#8A8178] hover:text-[#B3261E]"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Condições Gerais Editáveis */}
+              <div className="pt-2 border-t border-[#E5DFD6]">
+                <label className="text-[11px] font-bold uppercase tracking-wider text-[#1E1B16] flex items-center gap-1.5 mb-1">
+                  <BookOpen className="w-3.5 h-3.5 text-[#B3541E]" />
+                  Condições Gerais de Produção & Entrega (Editável)
+                </label>
+                <textarea
+                  value={condicoesGerais}
+                  onChange={(e) => setCondicoesGerais(e.target.value)}
+                  rows={4}
+                  className="w-full p-2.5 text-xs border border-[#E5DFD6] rounded bg-white text-[#4A4238] focus:outline-none focus:ring-1 focus:ring-[#B3541E] font-sans leading-relaxed"
+                  placeholder="Condições contratuais..."
+                />
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Coluna Direita: Dados de Envio, Cliente e Histórico (4 cols) */}
+        <div className="lg:col-span-4 space-y-4">
+          {/* Dados do Orçamento */}
+          <Card className="bg-white border-[#E5DFD6] shadow-sm">
+            <CardHeader className="p-4 border-b border-[#E5DFD6]">
               <CardTitle className="font-serif text-sm font-bold text-[#1E1B16]">
-                Dados do Solicitante
+                Dados do Orçamento
               </CardTitle>
             </CardHeader>
-            <CardContent className="p-4 space-y-3 text-sm">
+            <CardContent className="p-4 space-y-3.5 text-xs">
               <div>
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-[#8A8178]">
-                  Cliente / Lead
-                </span>
-                <p className="flex items-center gap-2 mt-1 text-[#1E1B16] font-semibold">
-                  <User className="w-4 h-4 text-[#8A8178]" />
-                  {clienteNome}
+                <label className="font-semibold uppercase tracking-wider text-[#8A8178] text-[10px]">
+                  Título do Projeto
+                </label>
+                <Input
+                  value={titulo}
+                  onChange={(e) => setTitulo(e.target.value)}
+                  className="mt-1 text-xs border-[#E5DFD6] bg-[#FAF8F5]"
+                />
+              </div>
+
+              <div>
+                <label className="font-semibold uppercase tracking-wider text-[#8A8178] text-[10px]">
+                  Data de Envio da Proposta
+                </label>
+                <Input
+                  type="date"
+                  value={dataEnvio}
+                  onChange={(e) => setDataEnvio(e.target.value)}
+                  className="mt-1 text-xs border-[#E5DFD6] bg-[#FAF8F5]"
+                />
+                <p className="text-[10px] text-[#8A8178] mt-1">
+                  Alimenta o cálculo de dias sem resposta e prioridades no painel.
                 </p>
               </div>
 
-              {clienteEmpresa && (
-                <div>
-                  <span className="text-[11px] font-semibold uppercase tracking-wider text-[#8A8178]">
-                    Empresa
-                  </span>
-                  <p className="flex items-center gap-2 mt-1 text-[#1E1B16]">
-                    <Building className="w-4 h-4 text-[#8A8178]" />
-                    {clienteEmpresa}
-                  </p>
-                </div>
-              )}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleSaveHeader}
+                className="w-full text-xs border-[#E5DFD6] text-[#1E1B16] hover:bg-[#FAF8F5]"
+              >
+                Salvar Título / Data
+              </Button>
+            </CardContent>
+          </Card>
 
-              {clienteTelefone && (
+          {/* Dados do Cliente */}
+          <Card className="bg-white border-[#E5DFD6] shadow-sm">
+            <CardHeader className="p-4 border-b border-[#E5DFD6]">
+              <CardTitle className="font-serif text-sm font-bold text-[#1E1B16]">
+                Cliente Solicitante
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-4 space-y-3 text-xs">
+              <div>
+                <span className="font-semibold uppercase tracking-wider text-[#8A8178] text-[10px]">
+                  Nome
+                </span>
+                <div className="font-bold text-sm text-[#1E1B16] mt-0.5">{clienteNome}</div>
+              </div>
+
+              {telefone && (
                 <div>
-                  <span className="text-[11px] font-semibold uppercase tracking-wider text-[#8A8178]">
-                    WhatsApp / Telefone
+                  <span className="font-semibold uppercase tracking-wider text-[#8A8178] text-[10px]">
+                    WhatsApp
                   </span>
-                  <div className="flex items-center justify-between gap-2 mt-1">
-                    <p className="flex items-center gap-2 text-[#1E1B16] font-mono">
-                      <Phone className="w-4 h-4 text-[#2F7D4F]" />
-                      {clienteTelefone}
-                    </p>
+                  <div className="flex items-center justify-between mt-1">
+                    <span className="font-mono text-[#1E1B16]">{telefone}</span>
                     <a
-                      href={formatWhatsAppUrl(
-                        clienteTelefone,
-                        `Olá ${clienteNome}! Gostaria de dar um retorno sobre a proposta "${quote.titulo}".`,
-                      )}
+                      href={waUrl || `https://wa.me/${telefone.replace(/\D/g, '')}`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded bg-[#2F7D4F]/10 text-[#2F7D4F] hover:bg-[#2F7D4F]/20 transition-colors"
+                      className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#2F7D4F] hover:underline"
                     >
                       <MessageCircle className="w-3.5 h-3.5" />
                       Conversar
@@ -479,254 +1019,16 @@ export default function QuoteDetail() {
                 </div>
               )}
 
-              {clienteEmail && (
-                <div>
-                  <span className="text-[11px] font-semibold uppercase tracking-wider text-[#8A8178]">
-                    Email
-                  </span>
-                  <p className="flex items-center gap-2 mt-1 text-[#1E1B16] truncate">
-                    <Mail className="w-4 h-4 text-[#8A8178]" />
-                    {clienteEmail}
-                  </p>
-                </div>
-              )}
-              {/* Campo para editar Data de Envio da Proposta */}
-              <div className="pt-3 border-t border-[#E5DFD6]">
-                <label className="text-[11px] font-semibold uppercase tracking-wider text-[#1E1B16] flex items-center gap-1.5 mb-1.5">
-                  <Calendar className="w-3.5 h-3.5 text-[#B3541E]" />
-                  Data de Envio da Proposta
-                </label>
-                <div className="flex items-center gap-2">
-                  <Input
-                    type="date"
-                    value={dataEnvioEdit}
-                    onChange={(e) => setDataEnvioEdit(e.target.value)}
-                    className="h-8 text-xs border-[#E5DFD6] bg-[#FAF8F5]"
-                  />
+              {quote.lead_id && (
+                <div className="pt-2 border-t border-[#E5DFD6]">
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={handleSaveDataEnvio}
-                    disabled={isUpdatingDataEnvio || !dataEnvioEdit}
-                    className="h-8 text-xs border-[#E5DFD6] hover:bg-white text-[#B3541E]"
+                    onClick={() => navigate(`/leads/${quote.lead_id}`)}
+                    className="w-full text-xs border-[#E5DFD6] text-[#B3541E] hover:bg-[#FAF8F5]"
                   >
-                    Salvar
+                    Ver Ficha do Lead
                   </Button>
-                </div>
-                <p className="text-[11px] text-[#8A8178] mt-1">
-                  Data em que a proposta foi entregue ao cliente.
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Tabela de Itens e Totais (8 cols) */}
-        <div className="lg:col-span-8 space-y-4">
-          <Card className="bg-white border-[#E5DFD6] shadow-sm">
-            <CardHeader className="p-4 border-b border-[#E5DFD6]">
-              <CardTitle className="font-serif text-base font-bold text-[#1E1B16] flex items-center gap-2">
-                <FileText className="w-4 h-4 text-[#B3541E]" />
-                Itens e Serviços Orçados
-              </CardTitle>
-            </CardHeader>
-
-            <CardContent className="p-0">
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs sm:text-sm">
-                  <thead className="bg-[#FAF8F5] border-b border-[#E5DFD6] text-[#8A8178] uppercase font-semibold tracking-wider text-[11px]">
-                    <tr>
-                      <th className="py-3 px-4">Item / Descrição</th>
-                      <th className="py-3 px-3 text-center w-20">Qtd</th>
-                      <th className="py-3 px-3 text-right w-28">Valor Unit.</th>
-                      <th className="py-3 px-3 text-right w-28">Subtotal</th>
-                      <th className="py-3 px-3 text-center w-12">Remover</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[#E5DFD6]">
-                    {items.length === 0 ? (
-                      <tr>
-                        <td colSpan={5} className="p-6 text-center text-xs text-[#8A8178]">
-                          Nenhum item adicionado a este orçamento ainda.
-                        </td>
-                      </tr>
-                    ) : (
-                      items.map((it) => {
-                        const itemSub = (it.quantidade || 0) * (it.valor_unitario || 0)
-                        return (
-                          <tr key={it.id} className="hover:bg-[#FAF8F5]">
-                            <td className="py-3 px-4 font-medium text-[#1E1B16]">{it.descricao}</td>
-                            <td className="py-3 px-3 text-center font-mono">{it.quantidade}</td>
-                            <td className="py-3 px-3 text-right font-mono text-[#8A8178]">
-                              {(it.valor_unitario || 0).toLocaleString('pt-BR', {
-                                style: 'currency',
-                                currency: 'BRL',
-                              })}
-                            </td>
-                            <td className="py-3 px-3 text-right font-bold text-[#1E1B16] font-mono">
-                              {itemSub.toLocaleString('pt-BR', {
-                                style: 'currency',
-                                currency: 'BRL',
-                              })}
-                            </td>
-                            <td className="py-3 px-3 text-center">
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => handleRemoveItem(it.id)}
-                                className="h-7 w-7 text-[#8A8178] hover:text-[#B3261E]"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </Button>
-                            </td>
-                          </tr>
-                        )
-                      })
-                    )}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Formulário Linha Adicionar Item */}
-              <form
-                onSubmit={handleAddItem}
-                className="p-3 bg-[#FAF8F5] border-t border-[#E5DFD6] flex flex-col sm:flex-row items-center gap-2"
-              >
-                <Input
-                  value={novaDescricao}
-                  onChange={(e) => setNovaDescricao(e.target.value)}
-                  placeholder="Nova descrição do serviço/produto"
-                  className="flex-1 text-xs sm:text-sm h-8 bg-white border-[#E5DFD6]"
-                />
-                <div className="flex items-center gap-2 w-full sm:w-auto">
-                  <Input
-                    type="number"
-                    min="1"
-                    value={novaQtd}
-                    onChange={(e) => setNovaQtd(parseInt(e.target.value) || 1)}
-                    placeholder="Qtd"
-                    className="w-20 text-xs sm:text-sm h-8 bg-white border-[#E5DFD6]"
-                  />
-                  <Input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={novoValorUnit}
-                    onChange={(e) => setNovoValorUnit(parseFloat(e.target.value) || 0)}
-                    placeholder="R$ Unit."
-                    className="w-28 text-xs sm:text-sm h-8 bg-white border-[#E5DFD6]"
-                  />
-                  <Button
-                    type="submit"
-                    disabled={isAddingItem || !novaDescricao.trim()}
-                    size="sm"
-                    className="h-8 bg-[#B3541E] hover:bg-[#9A4618] text-white text-xs whitespace-nowrap"
-                  >
-                    <Plus className="w-3.5 h-3.5 mr-1" />
-                    Adicionar
-                  </Button>
-                </div>
-              </form>
-
-              {/* Bloco de Totais */}
-              <div className="p-4 sm:p-5 bg-white border-t border-[#E5DFD6] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-[#8A8178]">Desconto (%):</span>
-                  <Input
-                    type="number"
-                    min="0"
-                    max="100"
-                    value={descontoPercentual}
-                    onChange={(e) => setDescontoPercentual(parseFloat(e.target.value) || 0)}
-                    onBlur={handleApplyDiscount}
-                    className="w-20 h-8 text-xs font-mono border-[#E5DFD6]"
-                  />
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleApplyDiscount}
-                    disabled={isUpdatingDiscount}
-                    className="h-8 text-xs border-[#E5DFD6]"
-                  >
-                    Salvar %
-                  </Button>
-                </div>
-
-                <div className="text-right space-y-1 w-full sm:w-auto">
-                  <div className="text-xs text-[#8A8178]">
-                    Subtotal:{' '}
-                    <span className="font-mono">
-                      {subtotal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                    </span>
-                  </div>
-                  {valorDesconto > 0 && (
-                    <div className="text-xs text-[#B3261E]">
-                      Desconto ({descontoPercentual}%):{' '}
-                      <span className="font-mono">
-                        -{' '}
-                        {valorDesconto.toLocaleString('pt-BR', {
-                          style: 'currency',
-                          currency: 'BRL',
-                        })}
-                      </span>
-                    </div>
-                  )}
-                  <div className="font-serif text-2xl font-bold text-[#1E1B16] pt-1 border-t border-[#E5DFD6]">
-                    Total:{' '}
-                    <span className="text-[#B3541E] font-mono">
-                      {valorTotal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Histórico de Conversas do Lead/Contato */}
-          <Card className="bg-white border-[#E5DFD6] shadow-sm">
-            <CardHeader className="p-4 border-b border-[#E5DFD6]">
-              <CardTitle className="font-serif text-base font-bold text-[#1E1B16] flex items-center gap-2">
-                <MessageCircle className="w-4 h-4 text-[#2F7D4F]" />
-                Histórico de Conversas com o Cliente
-              </CardTitle>
-              <p className="text-xs text-[#8A8178]">
-                Contexto das interações no WhatsApp para acompanhar a negociação
-              </p>
-            </CardHeader>
-            <CardContent className="p-4">
-              {conversations.length === 0 ? (
-                <p className="text-xs text-[#8A8178] text-center p-3">
-                  Nenhuma conversa registrada para este cliente.
-                </p>
-              ) : (
-                <div className="space-y-2.5 max-h-60 overflow-y-auto pr-1">
-                  {conversations.map((c) => {
-                    const isSent = c.direcao === 'enviada'
-                    const dataHora = new Date(c.created).toLocaleDateString('pt-BR', {
-                      day: '2-digit',
-                      month: '2-digit',
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })
-                    return (
-                      <div
-                        key={c.id}
-                        className={`p-2.5 rounded text-xs border ${
-                          isSent
-                            ? 'bg-[#E1F2E8] border-[#C5E6D2] text-[#1E1B16]'
-                            : 'bg-[#FAF8F5] border-[#E5DFD6] text-[#1E1B16]'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between gap-1 mb-1 text-[10px] text-[#8A8178]">
-                          <span className="font-semibold">
-                            {isSent ? 'Mensagem Enviada' : 'Mensagem Recebida'}
-                          </span>
-                          <span>{dataHora}</span>
-                        </div>
-                        <p className="whitespace-pre-wrap leading-relaxed">{c.mensagem}</p>
-                      </div>
-                    )
-                  })}
                 </div>
               )}
             </CardContent>
@@ -734,25 +1036,45 @@ export default function QuoteDetail() {
         </div>
       </div>
 
-      {/* Confirmação de Aprovação */}
-      <AlertDialog open={confirmAprovarOpen} onOpenChange={setConfirmAprovarOpen}>
+      {/* Modal de Gestão do Catálogo */}
+      <CatalogManagerModal
+        open={catalogModalOpen}
+        onOpenChange={setCatalogModalOpen}
+        onItemChanged={() => {
+          searchItemSugestoes('').then(setSugestoesCache)
+        }}
+      />
+
+      {/* Modal do PDF Oficial da Proposta */}
+      <ProposalPdfModal
+        open={pdfModalOpen}
+        onOpenChange={setPdfModalOpen}
+        quote={quote}
+        items={items}
+        tiragens={tiragens}
+        especificacoesGrafica={especificacoesGrafica}
+        condicoes={condicoesGerais}
+        descontoPercentual={descontoPercentual}
+      />
+
+      {/* Confirmação de Exclusão */}
+      <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
         <AlertDialogContent className="bg-white border-[#E5DFD6]">
           <AlertDialogHeader>
             <AlertDialogTitle className="font-serif text-[#1E1B16]">
-              Aprovar este Orçamento?
+              Excluir este orçamento?
             </AlertDialogTitle>
             <AlertDialogDescription className="text-sm text-[#8A8178]">
-              Ao aprovar o orçamento "{quote.titulo}", o status será atualizado para "Aprovado" e
-              computado nos indicadores de conversão do CRM.
+              Esta ação removerá o orçamento "{quote.titulo}" e seus itens associados.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel className="border-[#E5DFD6]">Cancelar</AlertDialogCancel>
             <AlertDialogAction
-              onClick={confirmAprovacao}
-              className="bg-[#2F7D4F] hover:bg-[#25633e] text-white"
+              onClick={handleDeleteQuote}
+              className="bg-[#B3261E] hover:bg-[#961f18] text-white"
             >
-              Sim, Aprovar Orçamento
+              Sim, Excluir
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

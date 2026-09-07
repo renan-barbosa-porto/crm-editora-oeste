@@ -16,8 +16,6 @@ import {
   Edit,
   ArrowLeft,
   Plus,
-  Flame,
-  Archive,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -50,7 +48,6 @@ import {
 } from '@/components/ui/select'
 import { NewQuoteModal } from '@/components/modals/NewQuoteModal'
 import { useToast } from '@/hooks/use-toast'
-import { cn } from '@/lib/utils'
 
 export default function LeadDetail() {
   const { id } = useParams<{ id: string }>()
@@ -131,24 +128,6 @@ export default function LeadDetail() {
     if (id) getLeadById(id).then(setLead)
   })
 
-  const handleQuickChangeEstagio = async (novoEstagio: LeadEstagio) => {
-    if (!id || !lead) return
-    try {
-      const updated = await updateLead(id, { estagio: novoEstagio })
-      setLead(updated)
-      setEditEstagio(novoEstagio)
-      toast({
-        title: 'Estágio atualizado',
-        description: `Lead alterado para "${novoEstagio}".`,
-      })
-    } catch {
-      toast({
-        title: 'Erro ao alterar estágio',
-        variant: 'destructive',
-      })
-    }
-  }
-
   const handleSaveEdit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!id || !editNome.trim() || !editTelefone.trim()) return
@@ -199,7 +178,6 @@ export default function LeadDetail() {
 
   const formatWhatsAppLink = (tel: string) => {
     const cleanNumber = tel.replace(/\D/g, '')
-    // Se não tiver código de país 55, adiciona
     const fullNumber = cleanNumber.startsWith('55') ? cleanNumber : `55${cleanNumber}`
     return `https://wa.me/${fullNumber}`
   }
@@ -218,13 +196,6 @@ export default function LeadDetail() {
         return (
           <Badge variant="outline" className="border-gray-400 text-gray-500">
             Perdido
-          </Badge>
-        )
-      case 'Esfriou':
-        return (
-          <Badge variant="outline" className="border-slate-400 text-slate-600 bg-slate-100">
-            <Archive className="w-3 h-3 mr-1 inline" />
-            Esfriou (Arquivado)
           </Badge>
         )
       default:
@@ -248,6 +219,12 @@ export default function LeadDetail() {
         return <Badge className="bg-[#2F7D4F] text-white text-xs">Aprovado</Badge>
       case 'Rejeitado':
         return <Badge className="bg-[#B3261E] text-white text-xs">Rejeitado</Badge>
+      case 'Esfriou':
+        return (
+          <Badge variant="outline" className="border-slate-400 text-slate-600 bg-slate-100 text-xs">
+            Esfriou
+          </Badge>
+        )
       default:
         return (
           <Badge variant="outline" className="text-xs">
@@ -309,29 +286,6 @@ export default function LeadDetail() {
             Abrir WhatsApp
           </a>
 
-          {lead.estagio === 'Esfriou' ? (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => handleQuickChangeEstagio('Contato Feito')}
-              className="border-[#2B5F8A] text-[#2B5F8A] hover:bg-[#F0F5FA]"
-            >
-              <Flame className="w-3.5 h-3.5 mr-1 text-[#2B5F8A]" />
-              Reativar Lead
-            </Button>
-          ) : (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => handleQuickChangeEstagio('Esfriou')}
-              className="border-slate-300 text-slate-600 hover:bg-slate-50"
-              title="Marcar como Esfriou e remover do funil ativo"
-            >
-              <Archive className="w-3.5 h-3.5 mr-1 text-slate-500" />
-              Marcar como Esfriou
-            </Button>
-          )}
-
           <Button
             variant="outline"
             size="sm"
@@ -375,13 +329,10 @@ export default function LeadDetail() {
         {/* Card Informações do Contato (5 cols) */}
         <div className="lg:col-span-5 space-y-4">
           <Card className="bg-white border-[#E5DFD6] shadow-sm">
-            <CardHeader className="p-4 pb-3 border-b border-[#E5DFD6] flex flex-row items-center justify-between">
+            <CardHeader className="p-4 pb-3 border-b border-[#E5DFD6]">
               <CardTitle className="font-serif text-sm font-bold text-[#1E1B16]">
                 Dados do Lead
               </CardTitle>
-              {lead.estagio === 'Esfriou' && (
-                <span className="text-xs text-slate-500 font-medium">Arquivado</span>
-              )}
             </CardHeader>
             <CardContent className="p-4 space-y-4 text-sm">
               <div>
@@ -425,7 +376,7 @@ export default function LeadDetail() {
               {lead.empresa && (
                 <div>
                   <span className="text-[11px] font-semibold uppercase tracking-wider text-[#8A8178]">
-                    Empresa / Organização
+                    Empresa / Instituição
                   </span>
                   <div className="flex items-center gap-2 mt-1 text-[#1E1B16]">
                     <Building className="w-4 h-4 text-[#8A8178]" />
@@ -469,7 +420,10 @@ export default function LeadDetail() {
                   <FileText className="w-4 h-4 text-[#B3541E]" />
                   Orçamentos Vinculados ({quotes.length})
                 </CardTitle>
-                <p className="text-xs text-[#8A8178] mt-0.5">Propostas geradas para este cliente</p>
+                <p className="text-xs text-[#8A8178] mt-0.5">
+                  Propostas geradas para este cliente (cada orçamento possui seu próprio status e
+                  ciclo)
+                </p>
               </div>
               <Button
                 variant="outline"
@@ -590,7 +544,6 @@ export default function LeadDetail() {
                     <SelectItem value="Proposta Enviada">Proposta Enviada</SelectItem>
                     <SelectItem value="Fechado">Fechado</SelectItem>
                     <SelectItem value="Perdido">Perdido</SelectItem>
-                    <SelectItem value="Esfriou">Esfriou (Arquivado)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

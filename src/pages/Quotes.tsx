@@ -1,19 +1,39 @@
 import React, { useEffect, useState, useMemo } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { getQuotes, getQuoteItems } from '@/services/quotes'
+import { getQuotes, getQuoteItems, updateQuoteStatus } from '@/services/quotes'
 import { useRealtime } from '@/hooks/use-realtime'
-import type { Quote } from '@/types/crm'
-import { FileText, Search, Plus, ArrowUpRight, AlertTriangle } from 'lucide-react'
+import type { Quote, QuoteStatus } from '@/types/crm'
+import {
+  FileText,
+  Search,
+  Plus,
+  ArrowUpRight,
+  AlertTriangle,
+  RotateCcw,
+  Archive,
+  Printer,
+  Snowflake,
+  BookOpen,
+} from 'lucide-react'
+import { CatalogManagerModal } from '@/components/modals/CatalogManagerModal'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { NewQuoteModal } from '@/components/modals/NewQuoteModal'
+import { ProposalPdfModal } from '@/components/modals/ProposalPdfModal'
 import { cn } from '@/lib/utils'
 import { getPrazoDestaque, getQuoteDataEnvio } from '@/lib/quote-utils'
+import {
+  parseTiragens,
+  CONDICOES_PADRAO_EDITORA_OESTE,
+  ESPECIFICACOES_GRAFICAS_PADRAO,
+} from '@/lib/pdf-generator'
+import { useToast } from '@/hooks/use-toast'
 
 export default function Quotes() {
   const navigate = useNavigate()
+  const { toast } = useToast()
   const [searchParams, setSearchParams] = useSearchParams()
 
   const [quotes, setQuotes] = useState<Quote[]>([])
@@ -26,6 +46,12 @@ export default function Quotes() {
   const [searchTerm, setSearchTerm] = useState(searchParams.get('q') || '')
 
   const [newQuoteModalOpen, setNewQuoteModalOpen] = useState(false)
+  const [catalogModalOpen, setCatalogModalOpen] = useState(false)
+
+  // Modal de PDF rápido
+  const [selectedQuoteForPdf, setSelectedQuoteForPdf] = useState<Quote | null>(null)
+  const [pdfItems, setPdfItems] = useState<any[]>([])
+  const [pdfModalOpen, setPdfModalOpen] = useState(false)
 
   const fetchQuotes = async () => {
     try {
@@ -68,6 +94,65 @@ export default function Quotes() {
   useRealtime('quotes', () => fetchQuotes())
   useRealtime('quote_items', () => fetchQuotes())
 
+  // Ação de Esfriar orçamento
+  const handleEsfriarQuote = async (quoteId: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation()
+    try {
+      await updateQuoteStatus(quoteId, 'Esfriou')
+      setQuotes((prev) => prev.map((q) => (q.id === quoteId ? { ...q, status: 'Esfriou' } : q)))
+      toast({
+        title: 'Orçamento marcado como Esfriou',
+        description: 'O orçamento foi movido para a aba "Esfriados".',
+      })
+    } catch {
+      toast({
+        title: 'Erro ao esfriar orçamento',
+        variant: 'destructive',
+      })
+      fetchQuotes()
+    }
+  }
+
+  // Ação de Reativar orçamento esfriado -> volta para status 'Enviado' (mesma mecânica de antes)
+  const handleReativarQuote = async (quoteId: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation()
+    try {
+      await updateQuoteStatus(quoteId, 'Enviado')
+      setQuotes((prev) => prev.map((q) => (q.id === quoteId ? { ...q, status: 'Enviado' } : q)))
+      toast({
+        title: 'Orçamento reativado com sucesso!',
+        description: 'O orçamento voltou para o status "Enviado" e reaparece na aba Pendentes.',
+      })
+    } catch {
+      toast({
+        title: 'Erro ao reativar orçamento',
+        variant: 'destructive',
+      })
+      fetchQuotes()
+    }
+  }
+
+  // Abrir Modal de PDF direto da lista
+  const handleOpenPdfForQuote = async (quote: Quote, e: React.MouseEvent) => {
+    e.stopPropagation()
+    try {
+      const items = await getQuoteItems(quote.id)
+      setSelectedQuoteForPdf(quote)
+      setPdfItems(items)
+      setPdfModalOpen(true)
+    } catch {
+      toast({
+        title: 'Erro ao carregar dados do PDF',
+        variant: 'destructive',
+      })
+    }
+  }
+
+  // Contagem de esfriados
+  const totalEsfriados = useMemo(() => {
+    return quotes.filter((q) => q.status === 'Esfriou').length
+  }, [quotes])
+
   // Filtragem por abas e busca
   const filteredQuotes = useMemo(() => {
     const list = quotes.filter((q) => {
@@ -79,6 +164,8 @@ export default function Quotes() {
         matchTab = q.status === 'Aprovado'
       } else if (activeTab === 'rejeitados') {
         matchTab = q.status === 'Rejeitado'
+      } else if (activeTab === 'esfriados') {
+        matchTab = q.status === 'Esfriou'
       }
 
       // Filtro de busca
@@ -93,7 +180,6 @@ export default function Quotes() {
     })
 
     // Na aba "pendentes", ordenar do mais antigo para o mais recente (mais antigo no topo)
-    // baseado na data efetiva de envio (ou created caso não haja)
     if (activeTab === 'pendentes') {
       return [...list].sort((a, b) => {
         const timeA = getQuoteDataEnvio(a)?.getTime() || new Date(a.created).getTime()
@@ -121,6 +207,16 @@ export default function Quotes() {
         return <Badge className="bg-[#2F7D4F] text-white">Aprovado</Badge>
       case 'Rejeitado':
         return <Badge className="bg-[#B3261E] text-white">Rejeitado</Badge>
+      case 'Esfriou':
+        return (
+          <Badge
+            variant="outline"
+            className="border-slate-400 text-slate-700 bg-slate-100 flex items-center gap-1"
+          >
+            <Snowflake className="w-3 h-3 text-slate-500" />
+            Esfriou
+          </Badge>
+        )
       default:
         return <Badge variant="secondary">{status}</Badge>
     }
@@ -143,16 +239,27 @@ export default function Quotes() {
           />
         </div>
 
-        <Button
-          onClick={() => setNewQuoteModalOpen(true)}
-          className="bg-[#B3541E] hover:bg-[#9A4618] text-white text-xs sm:text-sm font-medium h-9"
-        >
-          <Plus className="w-4 h-4 mr-1.5" />
-          Novo Orçamento
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            onClick={() => setCatalogModalOpen(true)}
+            className="border-[#E5DFD6] text-[#4A4238] hover:bg-[#FAF8F5] text-xs sm:text-sm font-medium h-9"
+          >
+            <BookOpen className="w-4 h-4 mr-1.5 text-[#B3541E]" />
+            Catálogo de Serviços
+          </Button>
+
+          <Button
+            onClick={() => setNewQuoteModalOpen(true)}
+            className="bg-[#B3541E] hover:bg-[#9A4618] text-white text-xs sm:text-sm font-medium h-9"
+          >
+            <Plus className="w-4 h-4 mr-1.5" />
+            Novo Orçamento
+          </Button>
+        </div>
       </div>
 
-      {/* Abas de Filtro de Status */}
+      {/* Abas de Filtro de Status com nova aba 'Esfriados' */}
       <Tabs
         value={activeTab}
         onValueChange={(val) => {
@@ -161,7 +268,7 @@ export default function Quotes() {
         }}
         className="w-full"
       >
-        <TabsList className="bg-[#E9E4DC] p-1 border border-[#E5DFD6]">
+        <TabsList className="bg-[#E9E4DC] p-1 border border-[#E5DFD6] flex-wrap h-auto gap-1">
           <TabsTrigger
             value="pendentes"
             className="data-[state=active]:bg-white data-[state=active]:text-[#B3541E] font-medium text-xs sm:text-sm"
@@ -186,6 +293,18 @@ export default function Quotes() {
           >
             Rejeitados
           </TabsTrigger>
+          <TabsTrigger
+            value="esfriados"
+            className="data-[state=active]:bg-white data-[state=active]:text-slate-700 text-xs sm:text-sm flex items-center gap-1.5"
+          >
+            <Snowflake className="w-3.5 h-3.5 text-slate-500" />
+            Esfriados
+            {totalEsfriados > 0 && (
+              <span className="ml-1 text-[11px] px-1.5 py-0.2 rounded-full bg-slate-200 text-slate-700 font-semibold">
+                {totalEsfriados}
+              </span>
+            )}
+          </TabsTrigger>
         </TabsList>
       </Tabs>
 
@@ -201,7 +320,7 @@ export default function Quotes() {
         ) : filteredQuotes.length === 0 ? (
           <div className="p-8 text-center text-sm text-[#8A8178]">
             <FileText className="w-10 h-10 mx-auto opacity-30 mb-2 text-[#B3541E]" />
-            Nenhum orçamento encontrado com este filtro.
+            Nenhum orçamento encontrado nesta aba.
           </div>
         ) : (
           <>
@@ -213,10 +332,10 @@ export default function Quotes() {
                     <th className="py-3 px-4">ID / Código</th>
                     <th className="py-3 px-4">Cliente</th>
                     <th className="py-3 px-4">Título / Proposta</th>
-                    <th className="py-3 px-4 text-right">Valor Total</th>
+                    <th className="py-3 px-4 text-right">Valor Editorial</th>
                     <th className="py-3 px-4">Data de Envio</th>
                     <th className="py-3 px-4 text-center">Status / Prazo</th>
-                    <th className="py-3 px-4 text-right">Ação</th>
+                    <th className="py-3 px-4 text-right">Ações</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#E5DFD6]">
@@ -226,6 +345,11 @@ export default function Quotes() {
                       quote.expand?.lead_id?.nome ||
                       'Não identificado'
                     const isVisualizado = quote.status === 'Visualizado'
+                    const isEsfriado = quote.status === 'Esfriou'
+                    const isPendente =
+                      quote.status === 'Rascunho' ||
+                      quote.status === 'Enviado' ||
+                      quote.status === 'Visualizado'
                     const valorFormatado = (quoteValues[quote.id] || 0).toLocaleString('pt-BR', {
                       style: 'currency',
                       currency: 'BRL',
@@ -251,7 +375,13 @@ export default function Quotes() {
                         onClick={() => navigate(`/orcamentos/${quote.id}`)}
                         className={cn(
                           'cursor-pointer transition-colors duration-150',
-                          prazo ? prazo.bgHighlightClass : isVisualizado ? 'bg-[#FFFDF7]' : '',
+                          isEsfriado
+                            ? 'bg-slate-50/70 text-slate-600'
+                            : prazo
+                              ? prazo.bgHighlightClass
+                              : isVisualizado
+                                ? 'bg-[#FFFDF7]'
+                                : '',
                           'hover:bg-[#FAF8F5]',
                         )}
                       >
@@ -284,10 +414,57 @@ export default function Quotes() {
                             )}
                           </div>
                         </td>
-                        <td className="py-3.5 px-4 text-right">
-                          <span className="inline-flex items-center gap-0.5 text-xs font-semibold text-[#B3541E] hover:underline">
-                            Ver <ArrowUpRight className="w-3.5 h-3.5" />
-                          </span>
+                        <td className="py-3.5 px-4 text-right" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                            {/* Botão Gerar PDF */}
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={(e) => handleOpenPdfForQuote(quote, e)}
+                              className="h-7 text-xs border-[#E5DFD6] text-[#4A4238] hover:bg-[#FAF8F5]"
+                              title="Gerar PDF da proposta comercial"
+                            >
+                              <Printer className="w-3 h-3 mr-1" />
+                              PDF
+                            </Button>
+
+                            {/* Ação Reativar se estiver Esfriado */}
+                            {isEsfriado && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={(e) => handleReativarQuote(quote.id, e)}
+                                className="h-7 text-xs border-[#2B5F8A] text-[#2B5F8A] hover:bg-[#F0F5FA]"
+                                title="Reativar orçamento (retorna para status Enviado)"
+                              >
+                                <RotateCcw className="w-3 h-3 mr-1" />
+                                Reativar
+                              </Button>
+                            )}
+
+                            {/* Ação Esfriar disponível em orçamentos pendentes */}
+                            {isPendente && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={(e) => handleEsfriarQuote(quote.id, e)}
+                                className="h-7 text-xs text-slate-500 hover:text-slate-700 hover:bg-slate-100"
+                                title="Mover para Esfriados"
+                              >
+                                <Snowflake className="w-3 h-3 mr-1" />
+                                Esfriar
+                              </Button>
+                            )}
+
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => navigate(`/orcamentos/${quote.id}`)}
+                              className="h-7 text-xs font-semibold text-[#B3541E] hover:text-[#9A4618] hover:bg-transparent"
+                            >
+                              Ver <ArrowUpRight className="w-3 h-3 ml-0.5" />
+                            </Button>
+                          </div>
                         </td>
                       </tr>
                     )
@@ -304,6 +481,11 @@ export default function Quotes() {
                   quote.expand?.lead_id?.nome ||
                   'Não identificado'
                 const isVisualizado = quote.status === 'Visualizado'
+                const isEsfriado = quote.status === 'Esfriou'
+                const isPendente =
+                  quote.status === 'Rascunho' ||
+                  quote.status === 'Enviado' ||
+                  quote.status === 'Visualizado'
                 const valorFormatado = (quoteValues[quote.id] || 0).toLocaleString('pt-BR', {
                   style: 'currency',
                   currency: 'BRL',
@@ -325,7 +507,13 @@ export default function Quotes() {
                     onClick={() => navigate(`/orcamentos/${quote.id}`)}
                     className={cn(
                       'p-3.5 cursor-pointer space-y-2',
-                      prazo ? prazo.bgHighlightClass : isVisualizado ? 'bg-[#FFFDF7]' : '',
+                      isEsfriado
+                        ? 'bg-slate-50'
+                        : prazo
+                          ? prazo.bgHighlightClass
+                          : isVisualizado
+                            ? 'bg-[#FFFDF7]'
+                            : '',
                       prazo ? prazo.cardBorderClass : '',
                       'hover:bg-[#FAF8F5]',
                     )}
@@ -357,6 +545,43 @@ export default function Quotes() {
                     {dataEnvioFmt && (
                       <div className="text-[11px] text-[#8A8178]">Enviado em: {dataEnvioFmt}</div>
                     )}
+
+                    <div
+                      className="pt-2 flex items-center justify-between gap-2 border-t border-[#E5DFD6]"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={(e) => handleOpenPdfForQuote(quote, e)}
+                        className="h-7 text-xs border-[#E5DFD6]"
+                      >
+                        <Printer className="w-3 h-3 mr-1" />
+                        PDF da Proposta
+                      </Button>
+
+                      {isEsfriado ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={(e) => handleReativarQuote(quote.id, e)}
+                          className="h-7 text-xs border-[#2B5F8A] text-[#2B5F8A]"
+                        >
+                          <RotateCcw className="w-3 h-3 mr-1" />
+                          Reativar
+                        </Button>
+                      ) : isPendente ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={(e) => handleEsfriarQuote(quote.id, e)}
+                          className="h-7 text-xs text-slate-500"
+                        >
+                          <Snowflake className="w-3 h-3 mr-1" />
+                          Esfriar
+                        </Button>
+                      ) : null}
+                    </div>
                   </div>
                 )
               })}
@@ -370,6 +595,27 @@ export default function Quotes() {
         onOpenChange={setNewQuoteModalOpen}
         onSuccess={fetchQuotes}
       />
+
+      <CatalogManagerModal
+        open={catalogModalOpen}
+        onOpenChange={setCatalogModalOpen}
+        onItemChanged={fetchQuotes}
+      />
+
+      {selectedQuoteForPdf && (
+        <ProposalPdfModal
+          open={pdfModalOpen}
+          onOpenChange={setPdfModalOpen}
+          quote={selectedQuoteForPdf}
+          items={pdfItems}
+          tiragens={parseTiragens(selectedQuoteForPdf)}
+          especificacoesGrafica={
+            selectedQuoteForPdf.grafica_especificacoes || ESPECIFICACOES_GRAFICAS_PADRAO
+          }
+          condicoes={selectedQuoteForPdf.condicoes_gerais || CONDICOES_PADRAO_EDITORA_OESTE}
+          descontoPercentual={selectedQuoteForPdf.desconto_percentual || 0}
+        />
+      )}
     </div>
   )
 }

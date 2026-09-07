@@ -1,64 +1,63 @@
 import React, { useEffect, useState, useMemo } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { getLeads } from '@/services/leads'
 import { getQuotes, getQuoteItems, updateQuoteStatus } from '@/services/quotes'
 import { useRealtime } from '@/hooks/use-realtime'
 import type { Lead, Quote } from '@/types/crm'
 import {
   Users,
-  Target,
-  Clock,
-  CheckCircle2,
-  ArrowRight,
+  FileText,
+  DollarSign,
   TrendingUp,
-  MessageCircle,
   AlertTriangle,
-  XCircle,
-  ExternalLink,
+  ArrowRight,
+  Plus,
+  MessageCircle,
+  Clock,
+  Printer,
+  Snowflake,
 } from 'lucide-react'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
-import { useToast } from '@/hooks/use-toast'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { NewLeadModal } from '@/components/modals/NewLeadModal'
+import { NewQuoteModal } from '@/components/modals/NewQuoteModal'
+import { ProposalPdfModal } from '@/components/modals/ProposalPdfModal'
 import { cn } from '@/lib/utils'
-import { getPrazoDestaque, getQuoteDataEnvio, formatWhatsAppUrl } from '@/lib/quote-utils'
+import { getPrazoDestaque, getQuoteDataEnvio } from '@/lib/quote-utils'
+import {
+  parseTiragens,
+  ESPECIFICACOES_GRAFICAS_PADRAO,
+  CONDICOES_PADRAO_EDITORA_OESTE,
+} from '@/lib/pdf-generator'
+import { useToast } from '@/hooks/use-toast'
 
 export default function Index() {
   const navigate = useNavigate()
   const { toast } = useToast()
-
   const [leads, setLeads] = useState<Lead[]>([])
   const [quotes, setQuotes] = useState<Quote[]>([])
   const [quoteValues, setQuoteValues] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(true)
 
-  // Ações de Aprovação / Rejeição rápida
-  const [quoteToAction, setQuoteToAction] = useState<{
-    id: string
-    titulo: string
-    acao: 'Aprovado' | 'Rejeitado'
-  } | null>(null)
-  const [isProcessingAction, setIsProcessingAction] = useState(false)
+  // Modais de Criação Rápida
+  const [newLeadModalOpen, setNewLeadModalOpen] = useState(false)
+  const [newQuoteModalOpen, setNewQuoteModalOpen] = useState(false)
 
-  const loadData = async () => {
+  // Modal PDF rápido
+  const [selectedQuoteForPdf, setSelectedQuoteForPdf] = useState<Quote | null>(null)
+  const [pdfItems, setPdfItems] = useState<any[]>([])
+  const [pdfModalOpen, setPdfModalOpen] = useState(false)
+
+  const fetchData = async () => {
     try {
-      const [allLeads, allQuotes] = await Promise.all([getLeads(), getQuotes('todos')])
-      setLeads(allLeads)
-      setQuotes(allQuotes)
+      const [leadsData, quotesData] = await Promise.all([getLeads(), getQuotes('todos')])
+      setLeads(leadsData)
+      setQuotes(quotesData)
 
-      // Carregar os valores totais dos orçamentos
+      // Buscar valores dos orçamentos
       const valuesMap: Record<string, number> = {}
-      for (const q of allQuotes) {
+      for (const q of quotesData) {
         try {
           const items = await getQuoteItems(q.id)
           const subtotal = items.reduce(
@@ -73,113 +72,105 @@ export default function Index() {
       }
       setQuoteValues(valuesMap)
     } catch (err) {
-      console.error('Erro ao carregar dados do dashboard:', err)
+      console.error('Erro ao carregar dados do painel:', err)
     } finally {
       setLoading(false)
     }
   }
 
   useEffect(() => {
-    loadData()
+    fetchData()
   }, [])
 
-  // Subscrições Realtime
-  useRealtime('leads', () => loadData())
-  useRealtime('quotes', () => loadData())
-  useRealtime('quote_items', () => loadData())
+  useRealtime('leads', () => fetchData())
+  useRealtime('quotes', () => fetchData())
+  useRealtime('quote_items', () => fetchData())
 
-  // Cálculos dos KPIs existentes
-  const now = new Date()
-  const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
-
-  // 1. Leads Novos (7 dias)
-  const leadsNovos7Dias = useMemo(() => {
-    return leads.filter((l) => new Date(l.created) >= sevenDaysAgo).length
-  }, [leads, sevenDaysAgo])
-
-  // 2. Leads Ativos (exclui 'Perdido', 'Fechado' e 'Esfriou' conforme especificação)
-  const leadsAtivos = useMemo(() => {
-    return leads.filter(
-      (l) => l.estagio !== 'Perdido' && l.estagio !== 'Fechado' && l.estagio !== 'Esfriou',
-    ).length
-  }, [leads])
-
-  // 3. Orçamentos Pendentes (status 'Enviado' ou 'Visualizado')
-  const orcamentosPendentesCount = useMemo(() => {
-    return quotes.filter((q) => q.status === 'Enviado' || q.status === 'Visualizado').length
-  }, [quotes])
-
-  // 4. Orçamentos Aprovados no mês atual
-  const orcamentosAprovadosMes = useMemo(() => {
-    const currentMonth = now.getMonth()
-    const currentYear = now.getFullYear()
-    return quotes.filter((q) => {
-      if (q.status !== 'Aprovado') return false
-      const qDate = new Date(q.updated || q.created)
-      return qDate.getMonth() === currentMonth && qDate.getFullYear() === currentYear
-    }).length
-  }, [quotes, now])
-
-  // ORÇAMENTOS ENVIADOS SEM RESPOSTA — SEÇÃO PRINCIPAL DE FOLLOW-UP
-  // Ordenados do MAIS ANTIGO para o MAIS RECENTE (mais antigo no topo, onde priorizar esforços)
-  const orcamentosFollowUp = useMemo(() => {
-    const pendentes = quotes.filter((q) => q.status === 'Enviado' || q.status === 'Visualizado')
-
-    return pendentes.sort((a, b) => {
-      const dateA = getQuoteDataEnvio(a)?.getTime() || new Date(a.created).getTime()
-      const dateB = getQuoteDataEnvio(b)?.getTime() || new Date(b.created).getTime()
-      return dateA - dateB // Ascendente: mais antigo primeiro
-    })
-  }, [quotes])
-
-  // Contadores de urgência de follow-up
-  const followUpStats = useMemo(() => {
-    let urgente = 0
-    let alerta = 0
-    let neutro = 0
-
-    orcamentosFollowUp.forEach((q) => {
-      const p = getPrazoDestaque(q)
-      if (p?.urgencia === 'urgente') urgente++
-      else if (p?.urgencia === 'alerta') alerta++
-      else neutro++
-    })
-
-    return { urgente, alerta, neutro }
-  }, [orcamentosFollowUp])
-
-  // Executar Aprovação ou Rejeição Rápida
-  const handleConfirmQuickStatus = async () => {
-    if (!quoteToAction) return
-    setIsProcessingAction(true)
+  // Ação rápida Esfriar
+  const handleEsfriarQuote = async (quoteId: string, e: React.MouseEvent) => {
+    e.stopPropagation()
     try {
-      await updateQuoteStatus(quoteToAction.id, quoteToAction.acao)
+      await updateQuoteStatus(quoteId, 'Esfriou')
+      setQuotes((prev) => prev.map((q) => (q.id === quoteId ? { ...q, status: 'Esfriou' } : q)))
       toast({
-        title: `Orçamento marcado como ${quoteToAction.acao}!`,
-        description: `O orçamento "${quoteToAction.titulo}" foi atualizado com sucesso.`,
+        title: 'Orçamento marcado como Esfriou',
+        description: 'Movido para a aba Esfriados na tela de orçamentos.',
       })
-      // Atualização otimista
-      setQuotes((prev) =>
-        prev.map((q) => (q.id === quoteToAction.id ? { ...q, status: quoteToAction.acao } : q)),
-      )
     } catch {
       toast({
-        title: 'Erro ao atualizar orçamento',
+        title: 'Erro ao esfriar orçamento',
         variant: 'destructive',
       })
-      loadData()
-    } finally {
-      setIsProcessingAction(false)
-      setQuoteToAction(null)
     }
   }
+
+  // Abrir PDF
+  const handleOpenPdf = async (quote: Quote, e: React.MouseEvent) => {
+    e.stopPropagation()
+    try {
+      const items = await getQuoteItems(quote.id)
+      setSelectedQuoteForPdf(quote)
+      setPdfItems(items)
+      setPdfModalOpen(true)
+    } catch {
+      toast({
+        title: 'Erro ao carregar dados do PDF',
+        variant: 'destructive',
+      })
+    }
+  }
+
+  // Estatísticas do Painel
+  const stats = useMemo(() => {
+    const totalLeads = leads.length
+    const orcamentosAtivos = quotes.filter(
+      (q) => q.status === 'Enviado' || q.status === 'Visualizado' || q.status === 'Rascunho',
+    ).length
+
+    const orcamentosAprovados = quotes.filter((q) => q.status === 'Aprovado')
+    const orcamentosEsfriados = quotes.filter((q) => q.status === 'Esfriou').length
+
+    const valorAprovado = orcamentosAprovados.reduce((acc, q) => acc + (quoteValues[q.id] || 0), 0)
+
+    const totalOrcamentos = quotes.length
+    const taxaConversao =
+      totalOrcamentos > 0 ? ((orcamentosAprovados.length / totalOrcamentos) * 100).toFixed(1) : '0'
+
+    return {
+      totalLeads,
+      orcamentosAtivos,
+      orcamentosEsfriados,
+      valorAprovado,
+      taxaConversao,
+    }
+  }, [leads, quotes, quoteValues])
+
+  // Orçamentos Pendentes ordenados: mais antigos primeiro (atenção prioritária)
+  const pendentesOrdenados = useMemo(() => {
+    const pendentes = quotes.filter(
+      (q) => q.status === 'Enviado' || q.status === 'Visualizado' || q.status === 'Rascunho',
+    )
+    return pendentes.sort((a, b) => {
+      const timeA = getQuoteDataEnvio(a)?.getTime() || new Date(a.created).getTime()
+      const timeB = getQuoteDataEnvio(b)?.getTime() || new Date(b.created).getTime()
+      return timeA - timeB
+    })
+  }, [quotes])
+
+  // Orçamentos que precisam de atenção (> 3 dias sem resposta: alerta 4-7d ou urgente >7d)
+  const orcamentosAtencao = useMemo(() => {
+    return pendentesOrdenados.filter((q) => {
+      const prazo = getPrazoDestaque(q)
+      return prazo !== null && (prazo.urgencia === 'urgente' || prazo.urgencia === 'alerta')
+    })
+  }, [pendentesOrdenados])
 
   if (loading) {
     return (
       <div className="flex h-64 items-center justify-center">
         <div className="flex flex-col items-center gap-2">
           <div className="h-8 w-8 animate-spin rounded-full border-4 border-[#B3541E] border-t-transparent" />
-          <p className="text-sm font-serif text-[#8A8178]">Carregando Painel de Follow-up...</p>
+          <p className="text-sm font-serif text-[#8A8178]">Carregando Painel Papel & Tinta...</p>
         </div>
       </div>
     )
@@ -187,318 +178,317 @@ export default function Index() {
 
   return (
     <div className="space-y-6">
-      {/* 4 KPI CARDS EXISTENTES */}
+      {/* Banner de Boas-Vindas e Ações Rápidas */}
+      <div className="bg-white p-6 rounded-lg border border-[#E5DFD6] shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h1 className="font-serif text-2xl font-bold text-[#1E1B16]">Visão Geral Comercial</h1>
+          <p className="text-sm text-[#8A8178] mt-1">
+            Editora Oeste • Acompanhamento de propostas, tiragens gráficas e funil de vendas
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2.5 flex-wrap">
+          <Button
+            onClick={() => setNewLeadModalOpen(true)}
+            variant="outline"
+            className="border-[#E5DFD6] text-[#1E1B16] hover:bg-[#FAF8F5] text-xs sm:text-sm h-9"
+          >
+            <Plus className="w-4 h-4 mr-1.5" />
+            Novo Lead
+          </Button>
+
+          <Button
+            onClick={() => setNewQuoteModalOpen(true)}
+            className="bg-[#B3541E] hover:bg-[#9A4618] text-white text-xs sm:text-sm font-medium h-9"
+          >
+            <Plus className="w-4 h-4 mr-1.5" />
+            Novo Orçamento
+          </Button>
+        </div>
+      </div>
+
+      {/* Grid de Métricas Principais */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* KPI 1: Leads Novos (7 dias) */}
-        <Card className="bg-white border-[#E5DFD6] shadow-sm hover:shadow-elevation transition-all duration-150 animate-fade-in-up [animation-delay:0ms]">
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <span className="text-xs font-semibold uppercase tracking-wider text-[#8A8178]">
-              Leads Novos (7 dias)
-            </span>
-            <div className="w-8 h-8 rounded-full bg-[#FAF8F5] flex items-center justify-center text-[#8A8178]">
-              <Users className="w-4 h-4" />
+        <Card className="bg-white border-[#E5DFD6] shadow-xs">
+          <CardContent className="p-4 flex items-center justify-between">
+            <div>
+              <p className="text-xs uppercase tracking-wider text-[#8A8178] font-semibold">
+                Leads no Funil
+              </p>
+              <h3 className="font-serif text-2xl font-bold text-[#1E1B16] mt-1">
+                {stats.totalLeads}
+              </h3>
             </div>
-          </CardHeader>
-          <CardContent>
-            <div className="font-serif text-3xl font-bold text-[#1E1B16]">{leadsNovos7Dias}</div>
-            <p className="text-xs text-[#8A8178] mt-1 flex items-center gap-1">
-              <TrendingUp className="w-3 h-3 text-[#2F7D4F]" />
-              Novas oportunidades esta semana
-            </p>
+            <div className="w-10 h-10 rounded-full bg-[#2B5F8A]/10 flex items-center justify-center text-[#2B5F8A]">
+              <Users className="w-5 h-5" />
+            </div>
           </CardContent>
         </Card>
 
-        {/* KPI 2: Leads Ativos */}
-        <Card className="bg-[#F0F5FA] border-[#D0DFEB] shadow-sm hover:shadow-elevation transition-all duration-150 animate-fade-in-up [animation-delay:80ms]">
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <span className="text-xs font-semibold uppercase tracking-wider text-[#2B5F8A]">
-              Leads Ativos
-            </span>
-            <div className="w-8 h-8 rounded-full bg-[#E1EDF7] flex items-center justify-center text-[#2B5F8A]">
-              <Target className="w-4 h-4" />
+        <Card className="bg-white border-[#E5DFD6] shadow-xs">
+          <CardContent className="p-4 flex items-center justify-between">
+            <div>
+              <p className="text-xs uppercase tracking-wider text-[#8A8178] font-semibold">
+                Orçamentos Pendentes
+              </p>
+              <h3 className="font-serif text-2xl font-bold text-[#B3541E] mt-1">
+                {stats.orcamentosAtivos}
+              </h3>
             </div>
-          </CardHeader>
-          <CardContent>
-            <div className="font-serif text-3xl font-bold text-[#1E1B16]">{leadsAtivos}</div>
-            <p className="text-xs text-[#2B5F8A] mt-1">Em andamento no funil</p>
+            <div className="w-10 h-10 rounded-full bg-[#FAF3EC] flex items-center justify-center text-[#B3541E]">
+              <FileText className="w-5 h-5" />
+            </div>
           </CardContent>
         </Card>
 
-        {/* KPI 3: Orçamentos Pendentes - Âmbar */}
-        <Card className="bg-[#FEF7EA] border-[#F2D8A7] shadow-sm hover:shadow-elevation transition-all duration-150 ring-2 ring-[#C07A1B]/40 animate-fade-in-up [animation-delay:160ms]">
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <span className="text-xs font-bold uppercase tracking-wider text-[#C07A1B]">
-              Orçamentos Pendentes
-            </span>
-            <div className="w-8 h-8 rounded-full bg-[#FCECD0] flex items-center justify-center text-[#C07A1B]">
-              <Clock className="w-4 h-4 animate-pulse" />
+        <Card className="bg-white border-[#E5DFD6] shadow-xs">
+          <CardContent className="p-4 flex items-center justify-between">
+            <div>
+              <p className="text-xs uppercase tracking-wider text-[#8A8178] font-semibold">
+                Orçamentos Esfriados
+              </p>
+              <h3 className="font-serif text-2xl font-bold text-slate-700 mt-1">
+                {stats.orcamentosEsfriados}
+              </h3>
             </div>
-          </CardHeader>
-          <CardContent>
-            <div className="font-serif text-3xl font-bold text-[#C07A1B]">
-              {orcamentosPendentesCount}
+            <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-600">
+              <Snowflake className="w-5 h-5" />
             </div>
-            <p className="text-xs font-medium text-[#925608] mt-1">
-              {followUpStats.urgente > 0 ? (
-                <span className="text-[#B3261E] font-semibold flex items-center gap-1">
-                  <AlertTriangle className="w-3 h-3" /> {followUpStats.urgente} urgente(s) (&gt;7
-                  dias)
-                </span>
-              ) : (
-                'Aguardando resposta do cliente'
-              )}
-            </p>
           </CardContent>
         </Card>
 
-        {/* KPI 4: Orçamentos Aprovados (mês) */}
-        <Card className="bg-[#F2F8F4] border-[#D1E6D8] shadow-sm hover:shadow-elevation transition-all duration-150 animate-fade-in-up [animation-delay:240ms]">
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <span className="text-xs font-semibold uppercase tracking-wider text-[#2F7D4F]">
-              Orçamentos Aprovados (mês)
-            </span>
-            <div className="w-8 h-8 rounded-full bg-[#E3F2E7] flex items-center justify-center text-[#2F7D4F]">
-              <CheckCircle2 className="w-4 h-4" />
+        <Card className="bg-white border-[#E5DFD6] shadow-xs">
+          <CardContent className="p-4 flex items-center justify-between">
+            <div>
+              <p className="text-xs uppercase tracking-wider text-[#8A8178] font-semibold">
+                Valor em Fechamento
+              </p>
+              <h3 className="font-serif text-2xl font-bold text-[#2F7D4F] mt-1 font-mono">
+                {stats.valorAprovado.toLocaleString('pt-BR', {
+                  style: 'currency',
+                  currency: 'BRL',
+                })}
+              </h3>
             </div>
-          </CardHeader>
-          <CardContent>
-            <div className="font-serif text-3xl font-bold text-[#2F7D4F]">
-              {orcamentosAprovadosMes}
+            <div className="w-10 h-10 rounded-full bg-[#2F7D4F]/10 flex items-center justify-center text-[#2F7D4F]">
+              <DollarSign className="w-5 h-5" />
             </div>
-            <p className="text-xs text-[#2F7D4F] mt-1">Convertidos em pedidos</p>
           </CardContent>
         </Card>
       </div>
 
-      {/* SEÇÃO PRINCIPAL: PAINEL DE FOLLOW-UP COMERCIAL (ONDE DEVO PRIORIZAR ESFORÇOS) */}
-      <Card className="bg-white border-[#E5DFD6] shadow-sm animate-fade-in-up [animation-delay:320ms]">
-        <CardHeader className="p-4 sm:p-5 border-b border-[#E5DFD6] flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[#FAF8F5]">
-          <div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <CardTitle className="font-serif text-lg font-bold text-[#1E1B16] flex items-center gap-2">
-                <Clock className="w-5 h-5 text-[#B3541E]" />
-                Prioridades de Follow-up — Orçamentos Enviados sem Resposta
-              </CardTitle>
-            </div>
-            <p className="text-xs text-[#8A8178] mt-1">
-              Ordenados do mais antigo para o mais recente. Priorize contato com clientes com
-              destaque vermelho e amarelo.
-            </p>
-          </div>
+      {/* Seção Central: Orçamentos com Urgência / Foco */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        {/* Painel de Orçamentos Pendentes / Prioridades (8 colunas) */}
+        <div className="lg:col-span-8 space-y-4">
+          <Card className="bg-white border-[#E5DFD6] shadow-sm">
+            <CardHeader className="p-4 border-b border-[#E5DFD6] flex flex-row items-center justify-between">
+              <div>
+                <CardTitle className="font-serif text-base font-bold text-[#1E1B16] flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-[#B3541E]" />
+                  Orçamentos Pendentes (Foco de Follow-up)
+                </CardTitle>
+                <p className="text-xs text-[#8A8178] mt-0.5">
+                  Ordenados do mais antigo para o mais recente. Destaque por dias sem resposta:
+                  vermelho &gt;7 dias, amarelo 4–7 dias, neutro até 3 dias.
+                </p>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => navigate('/orcamentos?tab=pendentes')}
+                className="text-xs text-[#B3541E] hover:text-[#9A4618] h-8"
+              >
+                Ver todos <ArrowRight className="w-3.5 h-3.5 ml-1" />
+              </Button>
+            </CardHeader>
 
-          <div className="flex items-center gap-2 flex-wrap">
-            {followUpStats.urgente > 0 && (
-              <Badge className="bg-[#B3261E] text-white text-xs font-semibold">
-                {followUpStats.urgente} urgente(s) (&gt;7 dias)
-              </Badge>
-            )}
-            {followUpStats.alerta > 0 && (
-              <Badge className="bg-[#C07A1B] text-white text-xs font-semibold">
-                {followUpStats.alerta} em atenção (4 a 7 dias)
-              </Badge>
-            )}
-            <Link
-              to="/orcamentos?tab=pendentes"
-              className="text-xs font-semibold text-[#B3541E] hover:underline flex items-center gap-1 ml-1"
-            >
-              Ver todos <ArrowRight className="w-3.5 h-3.5" />
-            </Link>
-          </div>
-        </CardHeader>
-
-        <CardContent className="p-0 divide-y divide-[#E5DFD6]">
-          {orcamentosFollowUp.length === 0 ? (
-            <div className="p-10 text-center text-sm text-[#8A8178]">
-              <CheckCircle2 className="w-10 h-10 mx-auto text-[#2F7D4F] opacity-40 mb-2" />
-              <p className="font-medium text-[#1E1B16]">Nenhum orçamento pendente de resposta!</p>
-              <p className="text-xs text-[#8A8178] mt-1">
-                Todos os orçamentos enviados foram respondidos ou aprovados.
-              </p>
-            </div>
-          ) : (
-            orcamentosFollowUp.map((quote) => {
-              const prazo = getPrazoDestaque(quote)
-              const clienteNome =
-                quote.expand?.contact_id?.nome ||
-                quote.expand?.lead_id?.nome ||
-                'Cliente não identificado'
-              const telefone =
-                quote.expand?.contact_id?.telefone || quote.expand?.lead_id?.telefone || ''
-              const valorFormatado = (quoteValues[quote.id] || 0).toLocaleString('pt-BR', {
-                style: 'currency',
-                currency: 'BRL',
-              })
-              const dataEnvioObj = getQuoteDataEnvio(quote)
-              const dataEnvioFmt = dataEnvioObj
-                ? dataEnvioObj.toLocaleDateString('pt-BR', {
-                    day: '2-digit',
-                    month: '2-digit',
-                    year: 'numeric',
-                  })
-                : 'Data não informada'
-
-              const waMsg = `Olá ${clienteNome}! Tudo bem? Gostaria de saber se você teve a oportunidade de avaliar a proposta "${quote.titulo}" que lhe enviamos.`
-              const waUrl = telefone ? formatWhatsAppUrl(telefone, waMsg) : ''
-
-              return (
-                <div
-                  key={quote.id}
-                  className={cn(
-                    'p-4 transition-all duration-150 flex flex-col lg:flex-row lg:items-center justify-between gap-4',
-                    prazo?.cardBorderClass,
-                    prazo?.bgHighlightClass,
-                    'hover:bg-[#FAF8F5]',
-                  )}
-                >
-                  {/* Informações do Orçamento & Lead */}
-                  <div
-                    className="min-w-0 flex-1 cursor-pointer"
-                    onClick={() => navigate(`/orcamentos/${quote.id}`)}
-                  >
-                    <div className="flex items-center gap-2 flex-wrap mb-1">
-                      <span className="text-xs font-mono font-bold text-[#8A8178]">
-                        {quote.codigo || 'ORC-TEMP'}
-                      </span>
-                      {prazo && (
-                        <Badge className={cn('text-xs px-2 py-0.5', prazo.badgeClass)}>
-                          {prazo.urgencia === 'urgente' && (
-                            <AlertTriangle className="w-3 h-3 mr-1 inline" />
-                          )}
-                          {prazo.label}
-                        </Badge>
-                      )}
-                      <span className="text-xs text-[#8A8178]">(Envio: {dataEnvioFmt})</span>
-                    </div>
-
-                    <h3 className="font-semibold text-sm sm:text-base text-[#1E1B16] hover:text-[#B3541E] transition-colors">
-                      {quote.titulo}
-                    </h3>
-
-                    <div className="flex items-center gap-3 text-xs text-[#8A8178] mt-1 flex-wrap">
-                      <span>
-                        Cliente:{' '}
-                        <strong className="text-[#1E1B16] font-medium">{clienteNome}</strong>
-                      </span>
-                      {telefone && (
-                        <span className="font-mono text-[#4A4238]">Tel: {telefone}</span>
-                      )}
-                      <span className="font-bold text-[#B3541E] font-mono text-sm">
-                        {valorFormatado}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* AÇÕES RÁPIDAS: WhatsApp, Aprovar, Rejeitar */}
-                  <div className="flex items-center gap-2 flex-shrink-0 flex-wrap pt-2 lg:pt-0 border-t lg:border-t-0 border-[#E5DFD6]">
-                    {waUrl ? (
-                      <a
-                        href={waUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-md bg-[#2F7D4F] text-white hover:bg-[#25633e] transition-colors shadow-xs"
-                        title="Abrir WhatsApp com mensagem pronta de acompanhamento"
-                      >
-                        <MessageCircle className="w-3.5 h-3.5" />
-                        WhatsApp
-                      </a>
-                    ) : (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled
-                        className="text-xs h-8 text-gray-400 border-gray-200"
-                        title="Sem telefone cadastrado"
-                      >
-                        <MessageCircle className="w-3.5 h-3.5 mr-1" />
-                        Sem Tel.
-                      </Button>
-                    )}
-
-                    <Button
-                      size="sm"
-                      onClick={() =>
-                        setQuoteToAction({
-                          id: quote.id,
-                          titulo: quote.titulo,
-                          acao: 'Aprovado',
-                        })
-                      }
-                      className="h-8 text-xs font-semibold bg-[#2F7D4F]/10 text-[#2F7D4F] hover:bg-[#2F7D4F] hover:text-white border border-[#2F7D4F]/30 transition-colors"
-                      title="Marcar proposta como Aprovada"
-                    >
-                      <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
-                      Aprovar
-                    </Button>
-
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() =>
-                        setQuoteToAction({
-                          id: quote.id,
-                          titulo: quote.titulo,
-                          acao: 'Rejeitado',
-                        })
-                      }
-                      className="h-8 text-xs font-semibold text-[#B3261E] border-[#B3261E]/30 hover:bg-[#B3261E] hover:text-white transition-colors"
-                      title="Marcar proposta como Rejeitada"
-                    >
-                      <XCircle className="w-3.5 h-3.5 mr-1" />
-                      Rejeitar
-                    </Button>
-
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => navigate(`/orcamentos/${quote.id}`)}
-                      className="h-8 text-xs text-[#8A8178] hover:text-[#1E1B16]"
-                      title="Ver detalhes completos do orçamento"
-                    >
-                      <ExternalLink className="w-3.5 h-3.5" />
-                    </Button>
-                  </div>
+            <CardContent className="p-0 divide-y divide-[#E5DFD6]">
+              {pendentesOrdenados.length === 0 ? (
+                <div className="p-8 text-center text-xs text-[#8A8178]">
+                  Nenhum orçamento pendente de resposta no momento.
                 </div>
-              )
-            })
-          )}
-        </CardContent>
-      </Card>
+              ) : (
+                pendentesOrdenados.slice(0, 6).map((quote) => {
+                  const clienteNome =
+                    quote.expand?.contact_id?.nome || quote.expand?.lead_id?.nome || 'Cliente'
+                  const valor = (quoteValues[quote.id] || 0).toLocaleString('pt-BR', {
+                    style: 'currency',
+                    currency: 'BRL',
+                  })
+                  const prazo = getPrazoDestaque(quote)
+                  const dataEnvioObj = getQuoteDataEnvio(quote)
+                  const dataEnvioFmt = dataEnvioObj
+                    ? dataEnvioObj.toLocaleDateString('pt-BR', {
+                        day: '2-digit',
+                        month: '2-digit',
+                      })
+                    : 'Hoje'
 
-      {/* CONFIRMAÇÃO DE AÇÃO RÁPIDA (APROVAR / REJEITAR) */}
-      <AlertDialog open={!!quoteToAction} onOpenChange={(open) => !open && setQuoteToAction(null)}>
-        <AlertDialogContent className="bg-white border-[#E5DFD6]">
-          <AlertDialogHeader>
-            <AlertDialogTitle className="font-serif text-[#1E1B16]">
-              {quoteToAction?.acao === 'Aprovado'
-                ? 'Marcar Orçamento como Aprovado?'
-                : 'Marcar Orçamento como Rejeitado?'}
-            </AlertDialogTitle>
-            <AlertDialogDescription className="text-sm text-[#8A8178]">
-              {quoteToAction?.acao === 'Aprovado'
-                ? `Confirmar aprovação de "${quoteToAction?.titulo}"? O orçamento será registrado como convertido em pedido.`
-                : `Deseja registrar que o orçamento "${quoteToAction?.titulo}" foi recusado pelo cliente?`}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel className="border-[#E5DFD6]">Cancelar</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleConfirmQuickStatus}
-              disabled={isProcessingAction}
-              className={cn(
-                quoteToAction?.acao === 'Aprovado'
-                  ? 'bg-[#2F7D4F] hover:bg-[#25633e] text-white'
-                  : 'bg-[#B3261E] hover:bg-[#961f18] text-white',
+                  return (
+                    <div
+                      key={quote.id}
+                      onClick={() => navigate(`/orcamentos/${quote.id}`)}
+                      className={cn(
+                        'p-3.5 cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-[#FAF8F5] transition-colors',
+                        prazo ? prazo.bgHighlightClass : '',
+                      )}
+                    >
+                      <div className="space-y-1 min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-mono text-xs font-semibold text-[#8A8178]">
+                            {quote.codigo || 'ORC'}
+                          </span>
+                          <span className="font-semibold text-sm text-[#1E1B16] truncate">
+                            {quote.titulo}
+                          </span>
+                          {prazo && (
+                            <Badge className={cn('text-[10px] px-1.5 py-0.2', prazo.badgeClass)}>
+                              {prazo.label}
+                            </Badge>
+                          )}
+                        </div>
+                        <p className="text-xs text-[#8A8178]">
+                          Cliente: <strong className="text-[#1E1B16]">{clienteNome}</strong> •
+                          Enviado: {dataEnvioFmt}
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-3 justify-between sm:justify-end">
+                        <span className="font-mono font-bold text-sm text-[#B3541E]">{valor}</span>
+
+                        <div
+                          className="flex items-center gap-1.5"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={(e) => handleOpenPdf(quote, e)}
+                            className="h-7 text-xs border-[#E5DFD6] text-[#4A4238] hover:bg-white"
+                            title="Gerar PDF"
+                          >
+                            <Printer className="w-3 h-3 mr-1" />
+                            PDF
+                          </Button>
+
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={(e) => handleEsfriarQuote(quote.id, e)}
+                            className="h-7 text-xs text-slate-500 hover:text-slate-700 hover:bg-slate-100"
+                            title="Esfriar orçamento"
+                          >
+                            <Snowflake className="w-3 h-3 mr-1" />
+                            Esfriar
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })
               )}
-            >
-              {isProcessingAction
-                ? 'Salvando...'
-                : quoteToAction?.acao === 'Aprovado'
-                  ? 'Sim, Aprovar Orçamento'
-                  : 'Sim, Marcar Rejeitado'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Coluna Direita: Alertas de Atenção e Acesso Rápido ao Funil (4 colunas) */}
+        <div className="lg:col-span-4 space-y-4">
+          {/* Card Alerta de Atenção (>3 dias) */}
+          <Card className="bg-white border-[#E5DFD6] shadow-sm">
+            <CardHeader className="p-4 border-b border-[#E5DFD6]">
+              <CardTitle className="font-serif text-sm font-bold text-[#1E1B16] flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-[#B3261E]" />
+                Necessitam Follow-up ({orcamentosAtencao.length})
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-3.5 space-y-2 text-xs">
+              {orcamentosAtencao.length === 0 ? (
+                <p className="text-[#8A8178] py-2 text-center">
+                  Tudo em dia! Nenhum orçamento aguardando há mais de 3 dias.
+                </p>
+              ) : (
+                orcamentosAtencao.slice(0, 4).map((q) => {
+                  const prazo = getPrazoDestaque(q)
+                  const clienteNome =
+                    q.expand?.contact_id?.nome || q.expand?.lead_id?.nome || 'Cliente'
+                  return (
+                    <div
+                      key={q.id}
+                      onClick={() => navigate(`/orcamentos/${q.id}`)}
+                      className="p-2.5 rounded border border-[#E5DFD6] bg-[#FAF8F5] cursor-pointer hover:bg-white transition-colors"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-semibold text-[#1E1B16] truncate max-w-[150px]">
+                          {clienteNome}
+                        </span>
+                        {prazo && (
+                          <Badge className={cn('text-[10px] px-1.5 py-0.2', prazo.badgeClass)}>
+                            {prazo.label}
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-[#8A8178] truncate mt-0.5">{q.titulo}</p>
+                    </div>
+                  )
+                })
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Atalho para Funil de Leads */}
+          <Card className="bg-[#FAF8F5] border-[#E5DFD6] shadow-sm">
+            <CardContent className="p-4 space-y-3">
+              <div className="flex items-center gap-2">
+                <Users className="w-4 h-4 text-[#B3541E]" />
+                <h4 className="font-serif font-bold text-sm text-[#1E1B16]">
+                  Funil de Vendas de Leads
+                </h4>
+              </div>
+              <p className="text-xs text-[#8A8178] leading-relaxed">
+                Leads em prospecção ativa. Ao aprovar ou enviar uma proposta, o estágio do lead é
+                atualizado automaticamente.
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => navigate('/leads')}
+                className="w-full text-xs border-[#E5DFD6] bg-white text-[#B3541E] hover:bg-[#FAF8F5]"
+              >
+                Abrir Kanban de Leads <ArrowRight className="w-3.5 h-3.5 ml-1" />
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+
+      {/* Modais Globais */}
+      <NewLeadModal
+        open={newLeadModalOpen}
+        onOpenChange={setNewLeadModalOpen}
+        onSuccess={fetchData}
+      />
+
+      <NewQuoteModal
+        open={newQuoteModalOpen}
+        onOpenChange={setNewQuoteModalOpen}
+        onSuccess={fetchData}
+      />
+
+      {selectedQuoteForPdf && (
+        <ProposalPdfModal
+          open={pdfModalOpen}
+          onOpenChange={setPdfModalOpen}
+          quote={selectedQuoteForPdf}
+          items={pdfItems}
+          tiragens={parseTiragens(selectedQuoteForPdf)}
+          especificacoesGrafica={
+            selectedQuoteForPdf.grafica_especificacoes || ESPECIFICACOES_GRAFICAS_PADRAO
+          }
+          condicoes={selectedQuoteForPdf.condicoes_gerais || CONDICOES_PADRAO_EDITORA_OESTE}
+          descontoPercentual={selectedQuoteForPdf.desconto_percentual || 0}
+        />
+      )}
     </div>
   )
 }

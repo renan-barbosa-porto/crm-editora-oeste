@@ -14,13 +14,7 @@ export interface Contact extends RecordModel {
   endereco?: string
 }
 
-export type LeadEstagio =
-  | 'Novo'
-  | 'Contato Feito'
-  | 'Proposta Enviada'
-  | 'Fechado'
-  | 'Perdido'
-  | 'Esfriou'
+export type LeadEstagio = 'Novo' | 'Contato Feito' | 'Proposta Enviada' | 'Fechado' | 'Perdido'
 
 export interface Lead extends RecordModel {
   nome: string
@@ -49,7 +43,21 @@ export interface Conversation extends RecordModel {
   }
 }
 
-export type QuoteStatus = 'Rascunho' | 'Enviado' | 'Visualizado' | 'Aprovado' | 'Rejeitado'
+export type QuoteStatus =
+  | 'Rascunho'
+  | 'Enviado'
+  | 'Visualizado'
+  | 'Aprovado'
+  | 'Rejeitado'
+  | 'Esfriou'
+
+export interface GraficaTiragemRow {
+  id?: string
+  tiragem: number // ex: 1, 50, 100, 500
+  descricao?: string // ex: "1 exemplar (sob demanda)", "50 exemplares"
+  valor_unitario: number
+  valor_total?: number
+}
 
 export interface Quote extends RecordModel {
   codigo?: string
@@ -60,6 +68,9 @@ export interface Quote extends RecordModel {
   desconto_percentual?: number
   validade?: string
   data_envio?: string
+  grafica_especificacoes?: string
+  grafica_tiragens?: GraficaTiragemRow[] | string
+  condicoes_gerais?: string
   expand?: {
     lead_id?: Lead
     contact_id?: Contact
@@ -73,4 +84,22 @@ export interface QuoteItem extends RecordModel {
   quantidade: number
   valor_unitario: number
   desconto_percentual?: number
+}
+
+// Catálogo Global em 2 níveis
+export interface QuoteCategory extends RecordModel {
+  nome: string
+  descricao?: string
+  ordem?: number
+}
+
+export interface CatalogItem extends RecordModel {
+  category_id?: string
+  nome: string
+  descricao?: string
+  valor_padrao?: number
+  unidade?: string
+  expand?: {
+    category_id?: QuoteCategory
+  }
 }

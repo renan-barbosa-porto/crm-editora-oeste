@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-07T13:24:51.061Z",
+  "generatedAt": "2026-09-07T14:45:18.635Z",
   "collections": [
     {
       "name": "users",
@@ -142,14 +142,7 @@
           "type": "select",
           "required": true,
           "system": false,
-          "selectValues": [
-            "Novo",
-            "Contato Feito",
-            "Proposta Enviada",
-            "Fechado",
-            "Perdido",
-            "Esfriou"
-          ]
+          "selectValues": ["Novo", "Contato Feito", "Proposta Enviada", "Fechado", "Perdido"]
         },
         {
           "name": "valor_estimado",
@@ -290,7 +283,7 @@
           "type": "select",
           "required": true,
           "system": false,
-          "selectValues": ["Rascunho", "Enviado", "Visualizado", "Aprovado", "Rejeitado"]
+          "selectValues": ["Rascunho", "Enviado", "Visualizado", "Aprovado", "Rejeitado", "Esfriou"]
         },
         {
           "name": "desconto_percentual",
@@ -321,6 +314,24 @@
         {
           "name": "data_envio",
           "type": "date",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "grafica_especificacoes",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "grafica_tiragens",
+          "type": "json",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "condicoes_gerais",
+          "type": "text",
           "required": false,
           "system": false
         }
@@ -390,6 +401,114 @@
         }
       ],
       "indexes": ["CREATE INDEX idx_quote_items_quote_id ON quote_items (quote_id)"]
+    },
+    {
+      "name": "quote_categories",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != ''",
+        "view": "@request.auth.id != ''",
+        "create": "@request.auth.id != ''",
+        "update": "@request.auth.id != ''",
+        "delete": "@request.auth.id != ''"
+      },
+      "fields": [
+        {
+          "name": "nome",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "descricao",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "ordem",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": ["CREATE UNIQUE INDEX idx_quote_categories_nome ON quote_categories (nome)"]
+    },
+    {
+      "name": "catalog_items",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.id != ''",
+        "view": "@request.auth.id != ''",
+        "create": "@request.auth.id != ''",
+        "update": "@request.auth.id != ''",
+        "delete": "@request.auth.id != ''"
+      },
+      "fields": [
+        {
+          "name": "category_id",
+          "type": "relation",
+          "required": false,
+          "system": false,
+          "collectionRef": "quote_categories"
+        },
+        {
+          "name": "nome",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "descricao",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "valor_padrao",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "unidade",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": [
+        "CREATE INDEX idx_catalog_items_category_id ON catalog_items (category_id)",
+        "CREATE INDEX idx_catalog_items_nome ON catalog_items (nome)"
+      ]
     }
   ]
 }

@@ -18,9 +18,19 @@ import {
 } from '@/components/ui/select'
 import { createQuote } from '@/services/quotes'
 import { getLeads } from '@/services/leads'
+import {
+  searchItemSugestoes,
+  salvarItemNaMemoriaSeNovo,
+  type ItemSugestao,
+} from '@/services/catalog'
+import {
+  ESPECIFICACOES_GRAFICAS_PADRAO,
+  CONDICOES_PADRAO_EDITORA_OESTE,
+  TIRAGENS_PADRAO,
+} from '@/lib/pdf-generator'
 import { useToast } from '@/hooks/use-toast'
-import type { Lead, QuoteItem, QuoteStatus } from '@/types/crm'
-import { Plus, Trash2 } from 'lucide-react'
+import type { Lead, QuoteItem, QuoteStatus, GraficaTiragemRow } from '@/types/crm'
+import { Plus, Trash2, Sparkles, BookOpen } from 'lucide-react'
 
 interface NewQuoteModalProps {
   open: boolean
@@ -33,6 +43,7 @@ interface ItemRow {
   descricao: string
   quantidade: number
   valor_unitario: number
+  showSugestoes?: boolean
 }
 
 export function NewQuoteModal({
@@ -47,13 +58,24 @@ export function NewQuoteModal({
   const [titulo, setTitulo] = useState('')
   const [status, setStatus] = useState<QuoteStatus>('Rascunho')
   const [descontoPercentual, setDescontoPercentual] = useState<number>(0)
-  // Data de envio da proposta (em vez de validade)
   const [dataEnvio, setDataEnvio] = useState<string>(() => {
     return new Date().toISOString().slice(0, 10)
   })
-  const [items, setItems] = useState<ItemRow[]>([
-    { descricao: '', quantidade: 1, valor_unitario: 0 },
-  ])
+
+  // "o formulário de NOVO orçamento começa VAZIO" — conforme solicitado expressamente pelo usuário!
+  const [items, setItems] = useState<ItemRow[]>([])
+
+  // Campos Livres de Produção Gráfica
+  const [especificacoesGrafica, setEspecificacoesGrafica] = useState(ESPECIFICACOES_GRAFICAS_PADRAO)
+  const [tiragens, setTiragens] = useState<GraficaTiragemRow[]>(TIRAGENS_PADRAO)
+
+  // Condições Gerais Editáveis
+  const [condicoesGerais, setCondicoesGerais] = useState(CONDICOES_PADRAO_EDITORA_OESTE)
+
+  // Autocomplete e memória
+  const [sugestoesCache, setSugestoesCache] = useState<ItemSugestao[]>([])
+  const [activeSugestaoRow, setActiveSugestaoRow] = useState<number | null>(null)
+
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
 
@@ -69,34 +91,88 @@ export function NewQuoteModal({
           }
         }
       })
+      // Começa vazio conforme solicitação: "não faça preenchimento automático, deixe aberto para preenchimento manual"
+      setItems([])
       setErrors({})
+      // Pré-carregar catálogo inicial para sugestões rápidas
+      searchItemSugestoes('').then(setSugestoesCache)
     }
   }, [open, initialLeadId])
 
   const handleAddItem = () => {
-    setItems([...items, { descricao: '', quantidade: 1, valor_unitario: 0 }])
+    setItems((prev) => [...prev, { descricao: '', quantidade: 1, valor_unitario: 0 }])
   }
 
   const handleRemoveItem = (index: number) => {
-    if (items.length <= 1) {
-      setItems([{ descricao: '', quantidade: 1, valor_unitario: 0 }])
-      return
-    }
-    setItems(items.filter((_, i) => i !== index))
+    setItems((prev) => prev.filter((_, i) => i !== index))
   }
 
-  const handleUpdateItem = (index: number, field: keyof ItemRow, value: any) => {
+  const handleUpdateItem = async (index: number, field: keyof ItemRow, value: any) => {
     const updated = [...items]
     updated[index] = { ...updated[index], [field]: value }
     setItems(updated)
+
+    if (field === 'descricao') {
+      const termo = String(value || '')
+      if (termo.length >= 1) {
+        const sugs = await searchItemSugestoes(termo)
+        setSugestoesCache(sugs)
+        setActiveSugestaoRow(index)
+      } else {
+        setActiveSugestaoRow(null)
+      }
+    }
   }
 
-  const subtotal = items.reduce(
+  const handleSelectSugestao = (index: number, sugestao: ItemSugestao) => {
+    const updated = [...items]
+    updated[index] = {
+      ...updated[index],
+      descricao: sugestao.nome,
+      valor_unitario: sugestao.valor_unitario || 0,
+    }
+    setItems(updated)
+    setActiveSugestaoRow(null)
+  }
+
+  // Tiragens handlers
+  const handleAddTiragemRow = () => {
+    setTiragens((prev) => [
+      ...prev,
+      {
+        tiragem: 200,
+        descricao: '200 exemplares',
+        valor_unitario: 16.0,
+        valor_total: 3200.0,
+      },
+    ])
+  }
+
+  const handleRemoveTiragemRow = (index: number) => {
+    setTiragens((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  const handleUpdateTiragemRow = (index: number, field: keyof GraficaTiragemRow, val: any) => {
+    const updated = [...tiragens]
+    const row = { ...updated[index], [field]: val }
+    if (field === 'tiragem' || field === 'valor_unitario') {
+      const tir = field === 'tiragem' ? Number(val) || 0 : Number(row.tiragem) || 0
+      const unit = field === 'valor_unitario' ? Number(val) || 0 : Number(row.valor_unitario) || 0
+      row.valor_total = tir * unit
+      if (!row.descricao || row.descricao.includes('exemplar')) {
+        row.descricao = `${tir} ${tir === 1 ? 'exemplar' : 'exemplares'}`
+      }
+    }
+    updated[index] = row
+    setTiragens(updated)
+  }
+
+  const subtotalEditorial = items.reduce(
     (acc, it) => acc + (Number(it.quantidade) || 0) * (Number(it.valor_unitario) || 0),
     0,
   )
-  const valorDesconto = (subtotal * (Number(descontoPercentual) || 0)) / 100
-  const valorTotal = Math.max(0, subtotal - valorDesconto)
+  const valorDesconto = (subtotalEditorial * (Number(descontoPercentual) || 0)) / 100
+  const valorTotalEditorial = Math.max(0, subtotalEditorial - valorDesconto)
 
   const validate = () => {
     const errs: Record<string, string> = {}
@@ -126,21 +202,31 @@ export function NewQuoteModal({
           status,
           desconto_percentual: Number(descontoPercentual) || 0,
           data_envio: dataEnvio ? `${dataEnvio} 12:00:00` : undefined,
+          grafica_especificacoes: especificacoesGrafica.trim() || undefined,
+          grafica_tiragens: tiragens,
+          condicoes_gerais: condicoesGerais.trim() || undefined,
         },
         items.filter((it) => it.descricao.trim() !== '') as Partial<QuoteItem>[],
       )
 
+      // Guardar na memória do catálogo todos os itens digitados pelo usuário
+      for (const it of items) {
+        if (it.descricao && it.descricao.trim()) {
+          salvarItemNaMemoriaSeNovo(it.descricao, it.valor_unitario)
+        }
+      }
+
       toast({
         title: 'Orçamento criado com sucesso!',
-        description: `Orçamento "${titulo}" foi gerado em ${status}.`,
+        description: `Orçamento "${titulo}" foi gerado em status ${status}.`,
       })
 
-      // Limpar formulário
+      // Reset
       setTitulo('')
       setSelectedLeadId('')
       setDescontoPercentual(0)
       setDataEnvio(new Date().toISOString().slice(0, 10))
-      setItems([{ descricao: '', quantidade: 1, valor_unitario: 0 }])
+      setItems([])
       onOpenChange(false)
       if (onSuccess) onSuccess(quote.id)
     } catch (error: any) {
@@ -156,15 +242,22 @@ export function NewQuoteModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto bg-white border-[#E5DFD6]">
+      <DialogContent className="max-w-3xl max-h-[92vh] overflow-y-auto bg-white border-[#E5DFD6]">
         <DialogHeader>
-          <DialogTitle className="font-serif text-xl text-[#1E1B16]">Novo Orçamento</DialogTitle>
-          <DialogDescription className="text-sm text-[#8A8178]">
-            Monte a proposta comercial com serviços gráficos, editoriais ou livros.
+          <DialogTitle className="font-serif text-xl text-[#1E1B16] flex items-center gap-2">
+            <span>Novo Orçamento Comercial</span>
+            <span className="text-xs px-2 py-0.5 rounded bg-[#FAF8F5] text-[#8A8178] border border-[#E5DFD6]">
+              Modelo Editora Oeste
+            </span>
+          </DialogTitle>
+          <DialogDescription className="text-xs text-[#8A8178]">
+            Monte a proposta com serviços editoriais (Parte 1), produção gráfica por tiragens (Parte
+            2) e condições de entrega.
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-4 pt-2">
+        <form onSubmit={handleSubmit} className="space-y-4 pt-1">
+          {/* Cabeçalho: Lead, Status, Título e Data de Envio */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <Label
@@ -211,55 +304,62 @@ export function NewQuoteModal({
                   <SelectItem value="Visualizado">Visualizado</SelectItem>
                   <SelectItem value="Aprovado">Aprovado</SelectItem>
                   <SelectItem value="Rejeitado">Rejeitado</SelectItem>
+                  <SelectItem value="Esfriou">Esfriou</SelectItem>
                 </SelectContent>
               </Select>
             </div>
           </div>
 
-          <div>
-            <Label
-              htmlFor="quote-titulo"
-              className="text-xs font-semibold uppercase tracking-wider text-[#1E1B16]"
-            >
-              Título do Orçamento / Projeto *
-            </Label>
-            <Input
-              id="quote-titulo"
-              value={titulo}
-              onChange={(e) => setTitulo(e.target.value)}
-              placeholder="Ex: Impressão de 500 Livros 120 páginas"
-              className="mt-1 border-[#E5DFD6] focus-visible:ring-[#B3541E]"
-            />
-            {errors.titulo && <p className="text-xs text-[#B3261E] mt-1">{errors.titulo}</p>}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="sm:col-span-2">
+              <Label
+                htmlFor="quote-titulo"
+                className="text-xs font-semibold uppercase tracking-wider text-[#1E1B16]"
+              >
+                Título do Orçamento / Projeto *
+              </Label>
+              <Input
+                id="quote-titulo"
+                value={titulo}
+                onChange={(e) => setTitulo(e.target.value)}
+                placeholder="Ex: Proposta Editorial — Pra. Daiana"
+                className="mt-1 border-[#E5DFD6] focus-visible:ring-[#B3541E]"
+              />
+              {errors.titulo && <p className="text-xs text-[#B3261E] mt-1">{errors.titulo}</p>}
+            </div>
+
+            <div>
+              <Label
+                htmlFor="quote-data-envio"
+                className="text-xs font-semibold uppercase tracking-wider text-[#1E1B16]"
+              >
+                Data de Envio *
+              </Label>
+              <Input
+                id="quote-data-envio"
+                type="date"
+                value={dataEnvio}
+                onChange={(e) => setDataEnvio(e.target.value)}
+                className="mt-1 border-[#E5DFD6] focus-visible:ring-[#B3541E]"
+              />
+            </div>
           </div>
 
-          <div>
-            <Label
-              htmlFor="quote-data-envio"
-              className="text-xs font-semibold uppercase tracking-wider text-[#1E1B16]"
-            >
-              Data de Envio da Proposta *
-            </Label>
-            <Input
-              id="quote-data-envio"
-              type="date"
-              value={dataEnvio}
-              onChange={(e) => setDataEnvio(e.target.value)}
-              className="mt-1 border-[#E5DFD6] focus-visible:ring-[#B3541E]"
-              placeholder="Data em que a proposta foi enviada"
-            />
-            <p className="text-[11px] text-[#8A8178] mt-1">
-              Data em que a proposta foi enviada ao cliente (base para acompanhamento e cálculo de
-              follow-up sem resposta).
-            </p>
-          </div>
-
-          {/* Itens do orçamento */}
-          <div className="border border-[#E5DFD6] rounded-md p-3 bg-[#FAF8F5]">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-semibold uppercase tracking-wider text-[#1E1B16]">
-                Itens & Serviços
-              </span>
+          {/* PARTE 1 — PRODUÇÃO EDITORIAL */}
+          <div className="border border-[#E5DFD6] rounded-md p-3.5 bg-[#FAF8F5] space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="text-xs font-bold uppercase tracking-wider text-[#1E1B16] flex items-center gap-1.5">
+                  <span className="bg-[#B3541E] text-white text-[10px] px-1.5 py-0.2 rounded font-mono">
+                    PARTE 1
+                  </span>
+                  Produção Editorial
+                </span>
+                <p className="text-[11px] text-[#8A8178]">
+                  Começa vazio. Digite para buscar itens salvos na memória ou cadastre novos
+                  livremente.
+                </p>
+              </div>
               <Button
                 type="button"
                 variant="outline"
@@ -268,77 +368,138 @@ export function NewQuoteModal({
                 className="h-7 text-xs border-[#E5DFD6] hover:bg-white text-[#B3541E]"
               >
                 <Plus className="w-3.5 h-3.5 mr-1" />
-                Adicionar Item
+                Adicionar Item Editorial
               </Button>
             </div>
 
-            <div className="space-y-2">
-              {items.map((item, idx) => (
-                <div
-                  key={idx}
-                  className="flex items-center gap-2 bg-white p-2 rounded border border-[#E5DFD6]"
-                >
-                  <Input
-                    placeholder="Descrição do serviço/produto"
-                    value={item.descricao}
-                    onChange={(e) => handleUpdateItem(idx, 'descricao', e.target.value)}
-                    className="flex-1 text-sm border-[#E5DFD6]"
-                  />
-                  <div className="w-20">
-                    <Input
-                      type="number"
-                      min="1"
-                      placeholder="Qtd"
-                      value={item.quantidade}
-                      onChange={(e) =>
-                        handleUpdateItem(
-                          idx,
-                          'quantidade',
-                          Math.max(1, parseInt(e.target.value) || 1),
-                        )
-                      }
-                      className="text-sm border-[#E5DFD6]"
-                    />
-                  </div>
-                  <div className="w-28">
-                    <Input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      placeholder="Unitário (R$)"
-                      value={item.valor_unitario}
-                      onChange={(e) =>
-                        handleUpdateItem(idx, 'valor_unitario', parseFloat(e.target.value) || 0)
-                      }
-                      className="text-sm border-[#E5DFD6]"
-                    />
-                  </div>
-                  <div className="w-24 text-right text-xs font-medium text-[#1E1B16] pr-1">
-                    {(
-                      (Number(item.quantidade) || 0) * (Number(item.valor_unitario) || 0)
-                    ).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                  </div>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => handleRemoveItem(idx)}
-                    className="h-8 w-8 text-[#8A8178] hover:text-[#B3261E]"
+            {items.length === 0 ? (
+              <div className="p-4 text-center text-xs text-[#8A8178] border border-dashed border-[#E5DFD6] rounded bg-white">
+                Nenhum item adicionado ainda. Clique em "Adicionar Item Editorial" acima para
+                começar.
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {items.map((item, idx) => (
+                  <div
+                    key={idx}
+                    className="relative bg-white p-2.5 rounded border border-[#E5DFD6]"
                   >
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
-                </div>
-              ))}
-            </div>
+                    <div className="flex items-center gap-2">
+                      <div className="relative flex-1">
+                        <Input
+                          placeholder="Digite o serviço editorial (ex: ISBN, Capa, Diagramação InDesign...)"
+                          value={item.descricao}
+                          onChange={(e) => handleUpdateItem(idx, 'descricao', e.target.value)}
+                          onFocus={() => setActiveSugestaoRow(idx)}
+                          className="text-xs sm:text-sm border-[#E5DFD6]"
+                        />
 
-            {/* Totais */}
-            <div className="mt-4 pt-3 border-t border-[#E5DFD6] flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 text-sm">
+                        {/* Dropdown de sugestões do catálogo com memória */}
+                        {activeSugestaoRow === idx && sugestoesCache.length > 0 && (
+                          <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-[#E5DFD6] rounded-md shadow-lg z-20 max-h-48 overflow-y-auto divide-y divide-[#FAF8F5]">
+                            <div className="p-1.5 bg-[#FAF8F5] text-[10px] font-bold uppercase text-[#8A8178] flex items-center justify-between">
+                              <span className="flex items-center gap-1">
+                                <Sparkles className="w-3 h-3 text-[#B3541E]" />
+                                Sugestões da memória do catálogo:
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => setActiveSugestaoRow(null)}
+                                className="text-gray-400 hover:text-gray-600"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                            {sugestoesCache.map((sug) => (
+                              <div
+                                key={sug.id}
+                                onMouseDown={(e) => {
+                                  e.preventDefault()
+                                  handleSelectSugestao(idx, sug)
+                                }}
+                                className="p-2 hover:bg-[#FAF8F5] cursor-pointer text-xs flex items-center justify-between gap-2"
+                              >
+                                <div className="min-w-0 flex-1">
+                                  <div className="font-semibold text-[#1E1B16] line-clamp-1">
+                                    {sug.nome}
+                                  </div>
+                                  {sug.descricao && (
+                                    <div className="text-[11px] text-[#8A8178] line-clamp-1">
+                                      {sug.descricao}
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="text-right flex-shrink-0 font-mono text-xs font-bold text-[#B3541E]">
+                                  {sug.valor_unitario > 0
+                                    ? sug.valor_unitario.toLocaleString('pt-BR', {
+                                        style: 'currency',
+                                        currency: 'BRL',
+                                      })
+                                    : 'A combinar'}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="w-16">
+                        <Input
+                          type="number"
+                          min="1"
+                          placeholder="Qtd"
+                          value={item.quantidade}
+                          onChange={(e) =>
+                            handleUpdateItem(
+                              idx,
+                              'quantidade',
+                              Math.max(1, parseInt(e.target.value) || 1),
+                            )
+                          }
+                          className="text-xs sm:text-sm text-center border-[#E5DFD6]"
+                        />
+                      </div>
+
+                      <div className="w-24">
+                        <Input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          placeholder="R$ Unit."
+                          value={item.valor_unitario}
+                          onChange={(e) =>
+                            handleUpdateItem(idx, 'valor_unitario', parseFloat(e.target.value) || 0)
+                          }
+                          className="text-xs sm:text-sm text-right border-[#E5DFD6]"
+                        />
+                      </div>
+
+                      <div className="w-24 text-right text-xs font-mono font-bold text-[#B3541E] pr-1">
+                        {(
+                          (Number(item.quantidade) || 0) * (Number(item.valor_unitario) || 0)
+                        ).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                      </div>
+
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleRemoveItem(idx)}
+                        className="h-8 w-8 text-[#8A8178] hover:text-[#B3261E]"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Subtotal Editorial */}
+            <div className="pt-2 border-t border-[#E5DFD6] flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
               <div className="flex items-center gap-2">
-                <Label htmlFor="quote-desc" className="text-xs text-[#8A8178]">
-                  Desconto (%):
-                </Label>
+                <span className="text-[#8A8178]">Desconto Editorial (%):</span>
                 <Input
-                  id="quote-desc"
                   type="number"
                   min="0"
                   max="100"
@@ -348,23 +509,150 @@ export function NewQuoteModal({
                       Math.min(100, Math.max(0, parseFloat(e.target.value) || 0)),
                     )
                   }
-                  className="w-20 h-8 border-[#E5DFD6]"
+                  className="w-16 h-7 text-xs border-[#E5DFD6] bg-white font-mono"
                 />
               </div>
 
               <div className="text-right">
-                <div className="text-xs text-[#8A8178]">
-                  Subtotal:{' '}
-                  {subtotal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                </div>
-                <div className="font-serif text-lg font-bold text-[#1E1B16]">
-                  Total:{' '}
-                  <span className="text-[#B3541E]">
-                    {valorTotal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                  </span>
-                </div>
+                <span className="text-[#8A8178]">Subtotal Editorial: </span>
+                <strong className="text-sm text-[#B3541E] font-mono">
+                  {valorTotalEditorial.toLocaleString('pt-BR', {
+                    style: 'currency',
+                    currency: 'BRL',
+                  })}
+                </strong>
               </div>
             </div>
+          </div>
+
+          {/* PARTE 2 — PRODUÇÃO GRÁFICA (Impressão do Livro) */}
+          <div className="border border-[#E5DFD6] rounded-md p-3.5 bg-[#FAF8F5] space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="text-xs font-bold uppercase tracking-wider text-[#1E1B16] flex items-center gap-1.5">
+                  <span className="bg-[#B3541E] text-white text-[10px] px-1.5 py-0.2 rounded font-mono">
+                    PARTE 2
+                  </span>
+                  Produção Gráfica (Impressão do Livro)
+                </span>
+                <p className="text-[11px] text-[#8A8178]">
+                  Campos livres para formato, miolo, papel, acabamento e tabela de impressão por
+                  tiragem flexível.
+                </p>
+              </div>
+            </div>
+
+            <div>
+              <Label className="text-[11px] font-semibold uppercase tracking-wider text-[#1E1B16]">
+                Especificações Técnicas da Impressão (Texto Livre)
+              </Label>
+              <textarea
+                value={especificacoesGrafica}
+                onChange={(e) => setEspecificacoesGrafica(e.target.value)}
+                rows={4}
+                className="w-full mt-1 p-2 text-xs border border-[#E5DFD6] rounded bg-white text-[#1E1B16] focus:outline-none focus:ring-1 focus:ring-[#B3541E] font-sans leading-relaxed"
+                placeholder="Ex: Livro até 72 páginas, formato 155x225mm, miolo P&B em Pólen 80g..."
+              />
+            </div>
+
+            {/* Tabela de Tiragens Flexíveis */}
+            <div className="space-y-2 pt-1">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-[#1E1B16]">
+                  Tabela de Impressão por Tiragem
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleAddTiragemRow}
+                  className="h-7 text-xs border-[#E5DFD6] text-[#B3541E] hover:bg-white"
+                >
+                  <Plus className="w-3.5 h-3.5 mr-1" />
+                  Adicionar Linha de Tiragem
+                </Button>
+              </div>
+
+              <div className="space-y-1.5">
+                {tiragens.map((row, idx) => (
+                  <div
+                    key={idx}
+                    className="flex items-center gap-2 bg-white p-2 rounded border border-[#E5DFD6]"
+                  >
+                    <div className="w-24">
+                      <Input
+                        type="number"
+                        min="1"
+                        placeholder="Tiragem"
+                        value={row.tiragem}
+                        onChange={(e) =>
+                          handleUpdateTiragemRow(
+                            idx,
+                            'tiragem',
+                            Math.max(1, parseInt(e.target.value) || 1),
+                          )
+                        }
+                        className="text-xs h-8 border-[#E5DFD6]"
+                      />
+                    </div>
+                    <div className="flex-1">
+                      <Input
+                        placeholder="Descrição (ex: 50 exemplares)"
+                        value={row.descricao}
+                        onChange={(e) => handleUpdateTiragemRow(idx, 'descricao', e.target.value)}
+                        className="text-xs h-8 border-[#E5DFD6]"
+                      />
+                    </div>
+                    <div className="w-28">
+                      <Input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        placeholder="Preço/un (R$)"
+                        value={row.valor_unitario}
+                        onChange={(e) =>
+                          handleUpdateTiragemRow(
+                            idx,
+                            'valor_unitario',
+                            parseFloat(e.target.value) || 0,
+                          )
+                        }
+                        className="text-xs h-8 text-right border-[#E5DFD6]"
+                      />
+                    </div>
+                    <div className="w-28 text-right font-mono font-bold text-xs text-[#1E1B16] pr-1">
+                      {(
+                        (Number(row.tiragem) || 0) * (Number(row.valor_unitario) || 0)
+                      ).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => handleRemoveTiragemRow(idx)}
+                      className="h-7 w-7 text-[#8A8178] hover:text-[#B3261E]"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* CONDIÇÕES GERAIS EDITÁVEIS */}
+          <div className="border border-[#E5DFD6] rounded-md p-3.5 bg-white space-y-2">
+            <Label className="text-xs font-semibold uppercase tracking-wider text-[#1E1B16] flex items-center gap-1.5">
+              <BookOpen className="w-3.5 h-3.5 text-[#B3541E]" />
+              Condições Gerais de Produção & Entrega (Editável)
+            </Label>
+            <textarea
+              value={condicoesGerais}
+              onChange={(e) => setCondicoesGerais(e.target.value)}
+              rows={4}
+              className="w-full p-2 text-xs border border-[#E5DFD6] rounded bg-[#FAF8F5] text-[#333] focus:outline-none focus:ring-1 focus:ring-[#B3541E] font-sans leading-relaxed"
+              placeholder="1. Prazo de entrega: 20 dias úteis... 2. Impressão sob demanda..."
+            />
           </div>
 
           <div className="flex justify-end gap-2 pt-2">
@@ -381,7 +669,7 @@ export function NewQuoteModal({
               disabled={isSubmitting || !titulo.trim() || !selectedLeadId}
               className="bg-[#B3541E] hover:bg-[#9A4618] text-white"
             >
-              {isSubmitting ? 'Gerando...' : 'Gerar Orçamento'}
+              {isSubmitting ? 'Gerando...' : 'Criar Orçamento'}
             </Button>
           </div>
         </form>
