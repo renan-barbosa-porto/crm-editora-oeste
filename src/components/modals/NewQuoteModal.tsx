@@ -47,7 +47,10 @@ export function NewQuoteModal({
   const [titulo, setTitulo] = useState('')
   const [status, setStatus] = useState<QuoteStatus>('Rascunho')
   const [descontoPercentual, setDescontoPercentual] = useState<number>(0)
-  const [validade, setValidade] = useState('')
+  // Data de envio da proposta (em vez de validade)
+  const [dataEnvio, setDataEnvio] = useState<string>(() => {
+    return new Date().toISOString().slice(0, 10)
+  })
   const [items, setItems] = useState<ItemRow[]>([
     { descricao: '', quantidade: 1, valor_unitario: 0 },
   ])
@@ -122,7 +125,7 @@ export function NewQuoteModal({
           contact_id: selectedLead?.contact_id || undefined,
           status,
           desconto_percentual: Number(descontoPercentual) || 0,
-          validade: validade || undefined,
+          data_envio: dataEnvio ? `${dataEnvio} 12:00:00` : undefined,
         },
         items.filter((it) => it.descricao.trim() !== '') as Partial<QuoteItem>[],
       )
@@ -136,7 +139,7 @@ export function NewQuoteModal({
       setTitulo('')
       setSelectedLeadId('')
       setDescontoPercentual(0)
-      setValidade('')
+      setDataEnvio(new Date().toISOString().slice(0, 10))
       setItems([{ descricao: '', quantidade: 1, valor_unitario: 0 }])
       onOpenChange(false)
       if (onSuccess) onSuccess(quote.id)
@@ -232,18 +235,23 @@ export function NewQuoteModal({
 
           <div>
             <Label
-              htmlFor="quote-validade"
+              htmlFor="quote-data-envio"
               className="text-xs font-semibold uppercase tracking-wider text-[#1E1B16]"
             >
-              Data de Validade (opcional)
+              Data de Envio da Proposta *
             </Label>
             <Input
-              id="quote-validade"
+              id="quote-data-envio"
               type="date"
-              value={validade}
-              onChange={(e) => setValidade(e.target.value)}
+              value={dataEnvio}
+              onChange={(e) => setDataEnvio(e.target.value)}
               className="mt-1 border-[#E5DFD6] focus-visible:ring-[#B3541E]"
+              placeholder="Data em que a proposta foi enviada"
             />
+            <p className="text-[11px] text-[#8A8178] mt-1">
+              Data em que a proposta foi enviada ao cliente (base para acompanhamento e cálculo de
+              follow-up sem resposta).
+            </p>
           </div>
 
           {/* Itens do orçamento */}

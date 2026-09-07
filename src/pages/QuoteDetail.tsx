@@ -26,7 +26,11 @@ import {
   Send,
   XCircle,
   MessageCircle,
+  Calendar,
+  AlertTriangle,
 } from 'lucide-react'
+import { getPrazoDestaque, getQuoteDataEnvio, formatWhatsAppUrl } from '@/lib/quote-utils'
+import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -63,6 +67,8 @@ export default function QuoteDetail() {
   const [confirmAprovarOpen, setConfirmAprovarOpen] = useState(false)
   const [descontoPercentual, setDescontoPercentual] = useState<number>(0)
   const [isUpdatingDiscount, setIsUpdatingDiscount] = useState(false)
+  const [dataEnvioEdit, setDataEnvioEdit] = useState<string>('')
+  const [isUpdatingDataEnvio, setIsUpdatingDataEnvio] = useState(false)
 
   // Novo item em adição
   const [novaDescricao, setNovaDescricao] = useState('')
@@ -76,6 +82,11 @@ export default function QuoteDetail() {
       const q = await getQuoteById(id)
       setQuote(q)
       setDescontoPercentual(q.desconto_percentual || 0)
+      if (q.data_envio) {
+        setDataEnvioEdit(q.data_envio.slice(0, 10))
+      } else if (q.created) {
+        setDataEnvioEdit(q.created.slice(0, 10))
+      }
 
       const qItems = await getQuoteItems(id)
       setItems(qItems)
@@ -117,6 +128,28 @@ export default function QuoteDetail() {
   )
   const valorDesconto = (subtotal * (Number(descontoPercentual) || 0)) / 100
   const valorTotal = Math.max(0, subtotal - valorDesconto)
+
+  const handleSaveDataEnvio = async () => {
+    if (!id || !dataEnvioEdit) return
+    setIsUpdatingDataEnvio(true)
+    try {
+      const updated = await updateQuote(id, {
+        data_envio: `${dataEnvioEdit} 12:00:00`,
+      })
+      setQuote(updated)
+      toast({
+        title: 'Data de envio atualizada',
+        description: 'A nova data foi salva com sucesso.',
+      })
+    } catch {
+      toast({
+        title: 'Erro ao atualizar data de envio',
+        variant: 'destructive',
+      })
+    } finally {
+      setIsUpdatingDataEnvio(false)
+    }
+  }
 
   const handleApplyDiscount = async () => {
     if (!id) return
@@ -309,10 +342,39 @@ export default function QuoteDetail() {
                 year: 'numeric',
               })}
             </span>
+            {(() => {
+              const dt = getQuoteDataEnvio(quote)
+              if (!dt) return null
+              return (
+                <>
+                  <span>•</span>
+                  <span>
+                    Enviado em{' '}
+                    {dt.toLocaleDateString('pt-BR', {
+                      day: '2-digit',
+                      month: '2-digit',
+                      year: 'numeric',
+                    })}
+                  </span>
+                </>
+              )
+            })()}
           </div>
           <div className="flex items-center gap-3 mt-1 flex-wrap">
             <h1 className="font-serif text-2xl font-bold text-[#1E1B16]">{quote.titulo}</h1>
             {getStatusBadge(quote.status)}
+            {(() => {
+              const prazo = getPrazoDestaque(quote)
+              if (!prazo) return null
+              return (
+                <Badge className={cn('text-xs px-2.5 py-0.5', prazo.badgeClass)}>
+                  {prazo.urgencia === 'urgente' && (
+                    <AlertTriangle className="w-3 h-3 mr-1 inline" />
+                  )}
+                  {prazo.label}
+                </Badge>
+              )
+            })()}
           </div>
         </div>
 
@@ -394,12 +456,26 @@ export default function QuoteDetail() {
               {clienteTelefone && (
                 <div>
                   <span className="text-[11px] font-semibold uppercase tracking-wider text-[#8A8178]">
-                    Telefone
+                    WhatsApp / Telefone
                   </span>
-                  <p className="flex items-center gap-2 mt-1 text-[#1E1B16] font-mono">
-                    <Phone className="w-4 h-4 text-[#2F7D4F]" />
-                    {clienteTelefone}
-                  </p>
+                  <div className="flex items-center justify-between gap-2 mt-1">
+                    <p className="flex items-center gap-2 text-[#1E1B16] font-mono">
+                      <Phone className="w-4 h-4 text-[#2F7D4F]" />
+                      {clienteTelefone}
+                    </p>
+                    <a
+                      href={formatWhatsAppUrl(
+                        clienteTelefone,
+                        `Olá ${clienteNome}! Gostaria de dar um retorno sobre a proposta "${quote.titulo}".`,
+                      )}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded bg-[#2F7D4F]/10 text-[#2F7D4F] hover:bg-[#2F7D4F]/20 transition-colors"
+                    >
+                      <MessageCircle className="w-3.5 h-3.5" />
+                      Conversar
+                    </a>
+                  </div>
                 </div>
               )}
 
@@ -414,6 +490,33 @@ export default function QuoteDetail() {
                   </p>
                 </div>
               )}
+              {/* Campo para editar Data de Envio da Proposta */}
+              <div className="pt-3 border-t border-[#E5DFD6]">
+                <label className="text-[11px] font-semibold uppercase tracking-wider text-[#1E1B16] flex items-center gap-1.5 mb-1.5">
+                  <Calendar className="w-3.5 h-3.5 text-[#B3541E]" />
+                  Data de Envio da Proposta
+                </label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="date"
+                    value={dataEnvioEdit}
+                    onChange={(e) => setDataEnvioEdit(e.target.value)}
+                    className="h-8 text-xs border-[#E5DFD6] bg-[#FAF8F5]"
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleSaveDataEnvio}
+                    disabled={isUpdatingDataEnvio || !dataEnvioEdit}
+                    className="h-8 text-xs border-[#E5DFD6] hover:bg-white text-[#B3541E]"
+                  >
+                    Salvar
+                  </Button>
+                </div>
+                <p className="text-[11px] text-[#8A8178] mt-1">
+                  Data em que a proposta foi entregue ao cliente.
+                </p>
+              </div>
             </CardContent>
           </Card>
         </div>

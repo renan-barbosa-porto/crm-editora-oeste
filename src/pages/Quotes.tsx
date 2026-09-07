@@ -3,13 +3,14 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { getQuotes, getQuoteItems } from '@/services/quotes'
 import { useRealtime } from '@/hooks/use-realtime'
 import type { Quote } from '@/types/crm'
-import { FileText, Search, Plus, ArrowUpRight, Filter } from 'lucide-react'
+import { FileText, Search, Plus, ArrowUpRight, AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { NewQuoteModal } from '@/components/modals/NewQuoteModal'
 import { cn } from '@/lib/utils'
+import { getPrazoDestaque, getQuoteDataEnvio } from '@/lib/quote-utils'
 
 export default function Quotes() {
   const navigate = useNavigate()
@@ -69,7 +70,7 @@ export default function Quotes() {
 
   // Filtragem por abas e busca
   const filteredQuotes = useMemo(() => {
-    return quotes.filter((q) => {
+    const list = quotes.filter((q) => {
       // Filtro de aba
       let matchTab = true
       if (activeTab === 'pendentes') {
@@ -90,6 +91,18 @@ export default function Quotes() {
 
       return matchTab && matchSearch
     })
+
+    // Na aba "pendentes", ordenar do mais antigo para o mais recente (mais antigo no topo)
+    // baseado na data efetiva de envio (ou created caso não haja)
+    if (activeTab === 'pendentes') {
+      return [...list].sort((a, b) => {
+        const timeA = getQuoteDataEnvio(a)?.getTime() || new Date(a.created).getTime()
+        const timeB = getQuoteDataEnvio(b)?.getTime() || new Date(b.created).getTime()
+        return timeA - timeB // Ascendente: mais antigo primeiro
+      })
+    }
+
+    return list
   }, [quotes, activeTab, searchTerm])
 
   const getStatusBadge = (status: string) => {
@@ -199,10 +212,10 @@ export default function Quotes() {
                   <tr>
                     <th className="py-3 px-4">ID / Código</th>
                     <th className="py-3 px-4">Cliente</th>
-                    <th className="py-3 px-4">Título / Serviço</th>
+                    <th className="py-3 px-4">Título / Proposta</th>
                     <th className="py-3 px-4 text-right">Valor Total</th>
-                    <th className="py-3 px-4">Data de Criação</th>
-                    <th className="py-3 px-4 text-center">Status</th>
+                    <th className="py-3 px-4">Data de Envio</th>
+                    <th className="py-3 px-4 text-center">Status / Prazo</th>
                     <th className="py-3 px-4 text-right">Ação</th>
                   </tr>
                 </thead>
@@ -217,11 +230,20 @@ export default function Quotes() {
                       style: 'currency',
                       currency: 'BRL',
                     })
-                    const dataFormatada = new Date(quote.created).toLocaleDateString('pt-BR', {
-                      day: '2-digit',
-                      month: '2-digit',
-                      year: 'numeric',
-                    })
+                    const dataEnvioObj = getQuoteDataEnvio(quote)
+                    const dataEnvioFmt = dataEnvioObj
+                      ? dataEnvioObj.toLocaleDateString('pt-BR', {
+                          day: '2-digit',
+                          month: '2-digit',
+                          year: 'numeric',
+                        })
+                      : new Date(quote.created).toLocaleDateString('pt-BR', {
+                          day: '2-digit',
+                          month: '2-digit',
+                          year: 'numeric',
+                        })
+
+                    const prazo = getPrazoDestaque(quote)
 
                     return (
                       <tr
@@ -229,7 +251,8 @@ export default function Quotes() {
                         onClick={() => navigate(`/orcamentos/${quote.id}`)}
                         className={cn(
                           'cursor-pointer transition-colors duration-150',
-                          isVisualizado ? 'bg-[#FFFDF7] hover:bg-[#FDF3E1]' : 'hover:bg-[#FAF8F5]',
+                          prazo ? prazo.bgHighlightClass : isVisualizado ? 'bg-[#FFFDF7]' : '',
+                          'hover:bg-[#FAF8F5]',
                         )}
                       >
                         <td className="py-3.5 px-4 font-mono font-semibold text-[#8A8178] text-xs">
@@ -237,13 +260,30 @@ export default function Quotes() {
                         </td>
                         <td className="py-3.5 px-4 font-semibold text-[#1E1B16]">{clienteNome}</td>
                         <td className="py-3.5 px-4 text-[#1E1B16] font-medium max-w-xs truncate">
-                          {quote.titulo}
+                          <span className="block truncate">{quote.titulo}</span>
+                          {prazo && (
+                            <span className="text-[11px] text-[#8A8178] flex items-center gap-1 mt-0.5">
+                              {prazo.urgencia === 'urgente' && (
+                                <AlertTriangle className="w-3 h-3 text-[#B3261E]" />
+                              )}
+                              {prazo.label}
+                            </span>
+                          )}
                         </td>
                         <td className="py-3.5 px-4 text-right font-bold text-[#B3541E] font-mono">
                           {valorFormatado}
                         </td>
-                        <td className="py-3.5 px-4 text-xs text-[#8A8178]">{dataFormatada}</td>
-                        <td className="py-3.5 px-4 text-center">{getStatusBadge(quote.status)}</td>
+                        <td className="py-3.5 px-4 text-xs text-[#8A8178]">{dataEnvioFmt}</td>
+                        <td className="py-3.5 px-4 text-center">
+                          <div className="flex flex-col items-center gap-1">
+                            {getStatusBadge(quote.status)}
+                            {prazo && (
+                              <Badge className={cn('text-[10px] px-1.5 py-0.2', prazo.badgeClass)}>
+                                {prazo.label}
+                              </Badge>
+                            )}
+                          </div>
+                        </td>
                         <td className="py-3.5 px-4 text-right">
                           <span className="inline-flex items-center gap-0.5 text-xs font-semibold text-[#B3541E] hover:underline">
                             Ver <ArrowUpRight className="w-3.5 h-3.5" />
@@ -269,20 +309,39 @@ export default function Quotes() {
                   currency: 'BRL',
                 })
 
+                const prazo = getPrazoDestaque(quote)
+                const dataEnvioObj = getQuoteDataEnvio(quote)
+                const dataEnvioFmt = dataEnvioObj
+                  ? dataEnvioObj.toLocaleDateString('pt-BR', {
+                      day: '2-digit',
+                      month: '2-digit',
+                      year: 'numeric',
+                    })
+                  : null
+
                 return (
                   <div
                     key={quote.id}
                     onClick={() => navigate(`/orcamentos/${quote.id}`)}
                     className={cn(
                       'p-3.5 cursor-pointer space-y-2',
-                      isVisualizado ? 'bg-[#FFFDF7]' : 'hover:bg-[#FAF8F5]',
+                      prazo ? prazo.bgHighlightClass : isVisualizado ? 'bg-[#FFFDF7]' : '',
+                      prazo ? prazo.cardBorderClass : '',
+                      'hover:bg-[#FAF8F5]',
                     )}
                   >
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between gap-1 flex-wrap">
                       <span className="text-xs font-mono font-semibold text-[#8A8178]">
                         {quote.codigo || 'ORC'}
                       </span>
-                      {getStatusBadge(quote.status)}
+                      <div className="flex items-center gap-1">
+                        {getStatusBadge(quote.status)}
+                        {prazo && (
+                          <Badge className={cn('text-[10px] px-1.5 py-0.2', prazo.badgeClass)}>
+                            {prazo.label}
+                          </Badge>
+                        )}
+                      </div>
                     </div>
                     <p className="font-semibold text-sm text-[#1E1B16] line-clamp-1">
                       {quote.titulo}
@@ -295,6 +354,9 @@ export default function Quotes() {
                         {valorFormatado}
                       </span>
                     </div>
+                    {dataEnvioFmt && (
+                      <div className="text-[11px] text-[#8A8178]">Enviado em: {dataEnvioFmt}</div>
+                    )}
                   </div>
                 )
               })}

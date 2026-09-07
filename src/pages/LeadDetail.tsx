@@ -1,10 +1,9 @@
-import React, { useEffect, useState, useRef } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { getLeadById, updateLead, deleteLead } from '@/services/leads'
 import { getQuotesByLeadId, getQuoteItems } from '@/services/quotes'
-import { getConversationsByLeadId, createConversation } from '@/services/conversations'
 import { useRealtime } from '@/hooks/use-realtime'
-import type { Lead, Quote, Conversation, LeadEstagio } from '@/types/crm'
+import type { Lead, Quote, LeadEstagio } from '@/types/crm'
 import {
   Phone,
   Mail,
@@ -12,12 +11,13 @@ import {
   MapPin,
   MessageCircle,
   FileText,
-  Send,
   MoreVertical,
   Trash2,
   Edit,
   ArrowLeft,
   Plus,
+  Flame,
+  Archive,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -60,9 +60,6 @@ export default function LeadDetail() {
   const [lead, setLead] = useState<Lead | null>(null)
   const [quotes, setQuotes] = useState<Quote[]>([])
   const [quoteValues, setQuoteValues] = useState<Record<string, number>>({})
-  const [conversations, setConversations] = useState<Conversation[]>([])
-  const [novaMensagem, setNovaMensagem] = useState('')
-  const [direcaoEnvio, setDirecaoEnvio] = useState<'enviada' | 'recebida'>('enviada')
   const [loading, setLoading] = useState(true)
 
   // Modais de ação
@@ -79,19 +76,12 @@ export default function LeadDetail() {
   const [editObservacoes, setEditObservacoes] = useState('')
   const [isSavingEdit, setIsSavingEdit] = useState(false)
 
-  const messagesEndRef = useRef<HTMLDivElement>(null)
-
   const loadAll = async () => {
     if (!id) return
     try {
-      const [leadData, quotesData, convsData] = await Promise.all([
-        getLeadById(id),
-        getQuotesByLeadId(id),
-        getConversationsByLeadId(id),
-      ])
+      const [leadData, quotesData] = await Promise.all([getLeadById(id), getQuotesByLeadId(id)])
       setLead(leadData)
       setQuotes(quotesData)
-      setConversations(convsData)
 
       // Inicializa campos de edição
       setEditNome(leadData.nome)
@@ -134,9 +124,6 @@ export default function LeadDetail() {
     loadAll()
   }, [id])
 
-  useRealtime('conversations', () => {
-    if (id) getConversationsByLeadId(id).then(setConversations)
-  })
   useRealtime('quotes', () => {
     if (id) getQuotesByLeadId(id).then(setQuotes)
   })
@@ -144,45 +131,21 @@ export default function LeadDetail() {
     if (id) getLeadById(id).then(setLead)
   })
 
-  // Rolagem suave para o fim das mensagens
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [conversations])
-
-  const handleSendMessage = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!novaMensagem.trim() || !id || !lead) return
-
-    const msgTexto = novaMensagem.trim()
-    setNovaMensagem('')
-
-    // Otimista
-    const tempConv: Conversation = {
-      id: 'temp-' + Date.now(),
-      mensagem: msgTexto,
-      direcao: direcaoEnvio,
-      lead_id: id,
-      contact_id: lead.contact_id,
-      created: new Date().toISOString(),
-      updated: new Date().toISOString(),
-      collectionId: 'conversations',
-      collectionName: 'conversations',
-    }
-    setConversations((prev) => [...prev, tempConv])
-
+  const handleQuickChangeEstagio = async (novoEstagio: LeadEstagio) => {
+    if (!id || !lead) return
     try {
-      await createConversation({
-        mensagem: msgTexto,
-        direcao: direcaoEnvio,
-        lead_id: id,
-        contact_id: lead.contact_id || undefined,
+      const updated = await updateLead(id, { estagio: novoEstagio })
+      setLead(updated)
+      setEditEstagio(novoEstagio)
+      toast({
+        title: 'Estágio atualizado',
+        description: `Lead alterado para "${novoEstagio}".`,
       })
     } catch {
       toast({
-        title: 'Erro ao registrar mensagem',
+        title: 'Erro ao alterar estágio',
         variant: 'destructive',
       })
-      if (id) getConversationsByLeadId(id).then(setConversations)
     }
   }
 
@@ -257,6 +220,13 @@ export default function LeadDetail() {
             Perdido
           </Badge>
         )
+      case 'Esfriou':
+        return (
+          <Badge variant="outline" className="border-slate-400 text-slate-600 bg-slate-100">
+            <Archive className="w-3 h-3 mr-1 inline" />
+            Esfriou (Arquivado)
+          </Badge>
+        )
       default:
         return <Badge variant="secondary">{estagio}</Badge>
     }
@@ -329,6 +299,39 @@ export default function LeadDetail() {
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          <a
+            href={formatWhatsAppLink(lead.telefone)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-md bg-[#2F7D4F] text-white hover:bg-[#25633e] transition-colors"
+          >
+            <MessageCircle className="w-4 h-4" />
+            Abrir WhatsApp
+          </a>
+
+          {lead.estagio === 'Esfriou' ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => handleQuickChangeEstagio('Contato Feito')}
+              className="border-[#2B5F8A] text-[#2B5F8A] hover:bg-[#F0F5FA]"
+            >
+              <Flame className="w-3.5 h-3.5 mr-1 text-[#2B5F8A]" />
+              Reativar Lead
+            </Button>
+          ) : (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => handleQuickChangeEstagio('Esfriou')}
+              className="border-slate-300 text-slate-600 hover:bg-slate-50"
+              title="Marcar como Esfriou e remover do funil ativo"
+            >
+              <Archive className="w-3.5 h-3.5 mr-1 text-slate-500" />
+              Marcar como Esfriou
+            </Button>
+          )}
+
           <Button
             variant="outline"
             size="sm"
@@ -367,23 +370,26 @@ export default function LeadDetail() {
         </div>
       </div>
 
-      {/* Grid Central: Informações de Contato + Chat WhatsApp + Orçamentos */}
+      {/* Grid Central: Informações de Contato + Orçamentos Vinculados */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* Card Lateral Esquerda: Informações de Contato (4 cols) */}
-        <div className="lg:col-span-4 space-y-4">
+        {/* Card Informações do Contato (5 cols) */}
+        <div className="lg:col-span-5 space-y-4">
           <Card className="bg-white border-[#E5DFD6] shadow-sm">
-            <CardHeader className="p-4 pb-2 border-b border-[#E5DFD6]">
+            <CardHeader className="p-4 pb-3 border-b border-[#E5DFD6] flex flex-row items-center justify-between">
               <CardTitle className="font-serif text-sm font-bold text-[#1E1B16]">
-                Dados do Potencial Cliente
+                Dados do Lead
               </CardTitle>
+              {lead.estagio === 'Esfriou' && (
+                <span className="text-xs text-slate-500 font-medium">Arquivado</span>
+              )}
             </CardHeader>
-            <CardContent className="p-4 space-y-3.5 text-sm">
+            <CardContent className="p-4 space-y-4 text-sm">
               <div>
                 <span className="text-[11px] font-semibold uppercase tracking-wider text-[#8A8178]">
                   WhatsApp / Telefone
                 </span>
                 <div className="flex items-center justify-between mt-1">
-                  <div className="flex items-center gap-2 text-[#1E1B16] font-medium">
+                  <div className="flex items-center gap-2 text-[#1E1B16] font-medium font-mono">
                     <Phone className="w-4 h-4 text-[#2F7D4F]" />
                     {lead.telefone}
                   </div>
@@ -391,7 +397,7 @@ export default function LeadDetail() {
                     href={formatWhatsAppLink(lead.telefone)}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded bg-[#2F7D4F]/10 text-[#2F7D4F] hover:bg-[#2F7D4F]/20 transition-colors"
+                    className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded bg-[#2F7D4F]/10 text-[#2F7D4F] hover:bg-[#2F7D4F]/20 transition-colors"
                   >
                     <MessageCircle className="w-3.5 h-3.5" />
                     Abrir WhatsApp
@@ -406,7 +412,10 @@ export default function LeadDetail() {
                   </span>
                   <div className="flex items-center gap-2 mt-1 text-[#1E1B16] truncate">
                     <Mail className="w-4 h-4 text-[#8A8178]" />
-                    <a href={`mailto:${lead.email}`} className="hover:underline truncate">
+                    <a
+                      href={`mailto:${lead.email}`}
+                      className="hover:underline truncate font-mono text-xs"
+                    >
                       {lead.email}
                     </a>
                   </div>
@@ -416,7 +425,7 @@ export default function LeadDetail() {
               {lead.empresa && (
                 <div>
                   <span className="text-[11px] font-semibold uppercase tracking-wider text-[#8A8178]">
-                    Empresa
+                    Empresa / Organização
                   </span>
                   <div className="flex items-center gap-2 mt-1 text-[#1E1B16]">
                     <Building className="w-4 h-4 text-[#8A8178]" />
@@ -428,7 +437,7 @@ export default function LeadDetail() {
               {lead.expand?.contact_id?.endereco && (
                 <div>
                   <span className="text-[11px] font-semibold uppercase tracking-wider text-[#8A8178]">
-                    Endereço Cadastrado
+                    Endereço
                   </span>
                   <div className="flex items-start gap-2 mt-1 text-[#1E1B16] text-xs">
                     <MapPin className="w-4 h-4 text-[#8A8178] flex-shrink-0 mt-0.5" />
@@ -440,9 +449,9 @@ export default function LeadDetail() {
               {lead.observacoes && (
                 <div className="pt-2 border-t border-[#E5DFD6]">
                   <span className="text-[11px] font-semibold uppercase tracking-wider text-[#8A8178]">
-                    Observações do Pedido
+                    Observações do Projeto
                   </span>
-                  <p className="text-xs text-[#1E1B16] mt-1 bg-[#FAF8F5] p-2.5 rounded border border-[#E5DFD6] leading-relaxed">
+                  <p className="text-xs text-[#1E1B16] mt-1 bg-[#FAF8F5] p-3 rounded border border-[#E5DFD6] leading-relaxed">
                     {lead.observacoes}
                   </p>
                 </div>
@@ -451,144 +460,31 @@ export default function LeadDetail() {
           </Card>
         </div>
 
-        {/* Card Central: Conversas WhatsApp (5 cols) */}
-        <div className="lg:col-span-5">
-          <Card className="bg-white border-[#E5DFD6] shadow-sm flex flex-col h-[520px]">
-            <CardHeader className="p-3.5 border-b border-[#E5DFD6] flex flex-row items-center justify-between bg-[#FAF8F5]">
-              <div className="flex items-center gap-2">
-                <div className="w-7 h-7 rounded-full bg-[#2F7D4F] text-white flex items-center justify-center">
-                  <MessageCircle className="w-4 h-4" />
-                </div>
-                <div>
-                  <CardTitle className="font-serif text-sm font-bold text-[#1E1B16]">
-                    Conversas WhatsApp
-                  </CardTitle>
-                  <p className="text-[11px] text-[#8A8178]">Histórico registrado manualmente</p>
-                </div>
-              </div>
-            </CardHeader>
-
-            {/* Balões de Mensagem */}
-            <div className="flex-1 p-4 overflow-y-auto space-y-3 bg-[#FBF9F6]">
-              {conversations.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center text-center text-[#8A8178] space-y-1">
-                  <MessageCircle className="w-8 h-8 opacity-40 text-[#2F7D4F]" />
-                  <p className="text-xs">Nenhuma mensagem registrada ainda.</p>
-                  <p className="text-[11px] text-[#8A8178]">
-                    Registre notas e mensagens trocadas pelo WhatsApp abaixo.
-                  </p>
-                </div>
-              ) : (
-                conversations.map((conv) => {
-                  const isSent = conv.direcao === 'enviada'
-                  const hora = new Date(conv.created).toLocaleTimeString('pt-BR', {
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  })
-                  const data = new Date(conv.created).toLocaleDateString('pt-BR', {
-                    day: '2-digit',
-                    month: '2-digit',
-                  })
-
-                  return (
-                    <div
-                      key={conv.id}
-                      className={cn('flex flex-col', isSent ? 'items-end' : 'items-start')}
-                    >
-                      <div
-                        className={cn(
-                          'max-w-[85%] rounded-lg p-2.5 text-xs shadow-xs leading-relaxed',
-                          isSent
-                            ? 'bg-[#E1F2E8] text-[#1E1B16] rounded-br-none border border-[#C5E6D2]'
-                            : 'bg-white text-[#1E1B16] rounded-bl-none border border-[#E5DFD6]',
-                        )}
-                      >
-                        <p className="whitespace-pre-wrap">{conv.mensagem}</p>
-                        <div className="text-[10px] text-[#8A8178] mt-1 text-right flex items-center justify-end gap-1">
-                          <span>
-                            {data} {hora}
-                          </span>
-                          <span>• {isSent ? 'Você' : lead.nome}</span>
-                        </div>
-                      </div>
-                    </div>
-                  )
-                })
-              )}
-              <div ref={messagesEndRef} />
-            </div>
-
-            {/* Campo de Entrada no Rodapé */}
-            <form onSubmit={handleSendMessage} className="p-3 border-t border-[#E5DFD6] bg-white">
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-[11px] text-[#8A8178] font-medium">Registrar como:</span>
-                <button
-                  type="button"
-                  onClick={() => setDirecaoEnvio('enviada')}
-                  className={cn(
-                    'text-[11px] px-2 py-0.5 rounded transition-colors',
-                    direcaoEnvio === 'enviada'
-                      ? 'bg-[#2F7D4F] text-white font-semibold'
-                      : 'bg-[#F7F5F2] text-[#8A8178]',
-                  )}
-                >
-                  Mensagem Enviada
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setDirecaoEnvio('recebida')}
-                  className={cn(
-                    'text-[11px] px-2 py-0.5 rounded transition-colors',
-                    direcaoEnvio === 'recebida'
-                      ? 'bg-[#2B5F8A] text-white font-semibold'
-                      : 'bg-[#F7F5F2] text-[#8A8178]',
-                  )}
-                >
-                  Mensagem Recebida
-                </button>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <Input
-                  value={novaMensagem}
-                  onChange={(e) => setNovaMensagem(e.target.value)}
-                  placeholder="Escreva a mensagem ou nota da conversa..."
-                  className="text-xs h-9 border-[#E5DFD6] focus-visible:ring-[#2F7D4F]"
-                />
-                <Button
-                  type="submit"
-                  disabled={!novaMensagem.trim()}
-                  className="h-9 px-3 bg-[#2F7D4F] hover:bg-[#25633e] text-white flex-shrink-0"
-                >
-                  <Send className="w-3.5 h-3.5" />
-                </Button>
-              </div>
-            </form>
-          </Card>
-        </div>
-
-        {/* Card Lateral Direita: Orçamentos Vinculados (3 cols) */}
-        <div className="lg:col-span-3 space-y-3">
+        {/* Card Orçamentos Vinculados (7 cols) */}
+        <div className="lg:col-span-7 space-y-3">
           <Card className="bg-white border-[#E5DFD6] shadow-sm">
-            <CardHeader className="p-3.5 border-b border-[#E5DFD6] flex flex-row items-center justify-between">
-              <CardTitle className="font-serif text-sm font-bold text-[#1E1B16] flex items-center gap-1.5">
-                <FileText className="w-4 h-4 text-[#B3541E]" />
-                Orçamentos ({quotes.length})
-              </CardTitle>
+            <CardHeader className="p-4 border-b border-[#E5DFD6] flex flex-row items-center justify-between">
+              <div>
+                <CardTitle className="font-serif text-base font-bold text-[#1E1B16] flex items-center gap-1.5">
+                  <FileText className="w-4 h-4 text-[#B3541E]" />
+                  Orçamentos Vinculados ({quotes.length})
+                </CardTitle>
+                <p className="text-xs text-[#8A8178] mt-0.5">Propostas geradas para este cliente</p>
+              </div>
               <Button
-                variant="ghost"
+                variant="outline"
                 size="sm"
                 onClick={() => setNewQuoteModalOpen(true)}
-                className="h-7 px-2 text-xs text-[#B3541E] hover:bg-[#FAF8F5]"
+                className="h-8 px-2.5 text-xs border-[#E5DFD6] text-[#B3541E] hover:bg-[#FAF8F5]"
               >
-                <Plus className="w-3.5 h-3.5 mr-0.5" />
-                Criar
+                <Plus className="w-3.5 h-3.5 mr-1" />
+                Novo Orçamento
               </Button>
             </CardHeader>
-            <CardContent className="p-3 space-y-2 max-h-[460px] overflow-y-auto">
+            <CardContent className="p-4 space-y-2.5">
               {quotes.length === 0 ? (
-                <div className="p-4 text-center text-xs text-[#8A8178]">
-                  Nenhum orçamento gerado para este lead.
+                <div className="p-8 text-center text-xs text-[#8A8178] border border-dashed border-[#E5DFD6] rounded-md">
+                  Nenhum orçamento gerado para este lead até o momento.
                 </div>
               ) : (
                 quotes.map((q) => {
@@ -596,23 +492,35 @@ export default function LeadDetail() {
                     style: 'currency',
                     currency: 'BRL',
                   })
+                  const dataEnvioFmt = q.data_envio
+                    ? new Date(q.data_envio).toLocaleDateString('pt-BR', {
+                        day: '2-digit',
+                        month: '2-digit',
+                        year: 'numeric',
+                      })
+                    : null
 
                   return (
                     <Link
                       key={q.id}
                       to={`/orcamentos/${q.id}`}
-                      className="block p-2.5 rounded-md border border-[#E5DFD6] bg-[#FAF8F5] hover:bg-white hover:shadow-xs transition-all hover:-translate-y-0.5"
+                      className="block p-3 rounded-md border border-[#E5DFD6] bg-[#FAF8F5] hover:bg-white hover:shadow-xs transition-all hover:-translate-y-0.5"
                     >
                       <div className="flex items-center justify-between gap-1 mb-1">
-                        <span className="text-[10px] font-mono font-medium text-[#8A8178]">
+                        <span className="text-xs font-mono font-medium text-[#8A8178]">
                           {q.codigo || 'ORC'}
                         </span>
                         {getQuoteStatusBadge(q.status)}
                       </div>
-                      <p className="text-xs font-semibold text-[#1E1B16] line-clamp-1">
+                      <p className="text-sm font-semibold text-[#1E1B16] line-clamp-1">
                         {q.titulo}
                       </p>
-                      <p className="text-xs font-bold text-[#B3541E] mt-1.5 text-right">{valor}</p>
+                      <div className="flex items-center justify-between mt-2 pt-2 border-t border-[#E5DFD6]/60 text-xs">
+                        <span className="text-[#8A8178]">
+                          {dataEnvioFmt ? `Enviado em: ${dataEnvioFmt}` : 'Sem data de envio'}
+                        </span>
+                        <span className="font-bold text-[#B3541E] font-mono text-sm">{valor}</span>
+                      </div>
                     </Link>
                   )
                 })
@@ -682,6 +590,7 @@ export default function LeadDetail() {
                     <SelectItem value="Proposta Enviada">Proposta Enviada</SelectItem>
                     <SelectItem value="Fechado">Fechado</SelectItem>
                     <SelectItem value="Perdido">Perdido</SelectItem>
+                    <SelectItem value="Esfriou">Esfriou (Arquivado)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

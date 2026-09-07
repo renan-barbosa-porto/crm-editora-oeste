@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-05T14:45:27.195Z",
+  "generatedAt": "2026-09-07T13:24:51.061Z",
   "collections": [
     {
       "name": "users",
@@ -142,7 +142,14 @@
           "type": "select",
           "required": true,
           "system": false,
-          "selectValues": ["Novo", "Contato Feito", "Proposta Enviada", "Fechado", "Perdido"]
+          "selectValues": [
+            "Novo",
+            "Contato Feito",
+            "Proposta Enviada",
+            "Fechado",
+            "Perdido",
+            "Esfriou"
+          ]
         },
         {
           "name": "valor_estimado",
@@ -310,6 +317,12 @@
           "required": false,
           "system": false,
           "autodateTriggers": ["onCreate", "onUpdate"]
+        },
+        {
+          "name": "data_envio",
+          "type": "date",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": [

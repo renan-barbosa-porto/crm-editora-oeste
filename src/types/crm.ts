@@ -14,7 +14,13 @@ export interface Contact extends RecordModel {
   endereco?: string
 }
 
-export type LeadEstagio = 'Novo' | 'Contato Feito' | 'Proposta Enviada' | 'Fechado' | 'Perdido'
+export type LeadEstagio =
+  | 'Novo'
+  | 'Contato Feito'
+  | 'Proposta Enviada'
+  | 'Fechado'
+  | 'Perdido'
+  | 'Esfriou'
 
 export interface Lead extends RecordModel {
   nome: string
@@ -53,6 +59,7 @@ export interface Quote extends RecordModel {
   status: QuoteStatus
   desconto_percentual?: number
   validade?: string
+  data_envio?: string
   expand?: {
     lead_id?: Lead
     contact_id?: Contact
