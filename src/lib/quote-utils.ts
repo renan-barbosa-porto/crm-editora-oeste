@@ -48,6 +48,87 @@ export function calcularDiasSemResposta(quote: Quote): number | null {
  * - 4 a 7 dias = destaque AMARELO;
  * - até 3 dias = estilo NEUTRO.
  */
+/**
+ * Extrai o maior número de proposta usado em orçamentos existentes para exibir como lembrete (hint).
+ * Procura tanto em `numero_referencia` quanto em `codigo` (ex: "ORC-26152" ou "26152").
+ */
+export function getUltimoNumeroPropostaUsado(quotes: Quote[]): string | null {
+  let maiorNumero = 0
+
+  for (const q of quotes) {
+    const refs = [q.numero_referencia, q.codigo].filter(Boolean) as string[]
+    for (const ref of refs) {
+      // Procura sequências de dígitos
+      const matches = ref.match(/\d+/g)
+      if (matches) {
+        for (const m of matches) {
+          const num = parseInt(m, 10)
+          if (!isNaN(num) && num > maiorNumero) {
+            maiorNumero = num
+          }
+        }
+      }
+    }
+  }
+
+  return maiorNumero > 0 ? String(maiorNumero) : null
+}
+
+/**
+ * Calcula o valor total do orçamento considerando a regra de tiragem de valorização:
+ * - Se inclui_editorial !== false, soma o subtotal líquido da Parte 1 (editorial).
+ * - Soma a faixa da Parte 2 (gráfica) de acordo com `tiragem_valorizacao`:
+ *     - '1': lote de 1 exemplar
+ *     - '50': lote de 50 exemplares
+ *     - '100': lote de 100 exemplares
+ *     - 'combinar': sem valor da produção gráfica (ou se for só gráfica, 0)
+ *   Se 'combinar' e não tiver editorial, retorna 0 (entra na contagem sem valor monetário).
+ */
+export function calcularValorQuote(
+  quote: Quote,
+  items?: { quantidade?: number; valor_unitario?: number }[],
+): number {
+  let total = 0
+
+  // 1. Produção editorial (se aplicável)
+  const incluiEditorial = quote.inclui_editorial !== false
+  if (incluiEditorial) {
+    const quoteItems = items || quote.expand?.quote_items_via_quote_id || []
+    const subtotalEditorial = quoteItems.reduce((acc, it) => {
+      const q = it.quantidade || 0
+      const v = it.valor_unitario || 0
+      return acc + q * v
+    }, 0)
+    const desc = quote.desconto_percentual || 0
+    const descVal = (subtotalEditorial * desc) / 100
+    total += Math.max(0, subtotalEditorial - descVal)
+  }
+
+  // 2. Produção gráfica por tiragem de valorização
+  const tiragemValorizacao = quote.tiragem_valorizacao || '50'
+  if (tiragemValorizacao !== 'combinar') {
+    let tiragensList: { tiragem: number; valor_unitario: number; valor_total?: number }[] = []
+    if (Array.isArray(quote.grafica_tiragens)) {
+      tiragensList = quote.grafica_tiragens
+    } else if (typeof quote.grafica_tiragens === 'string') {
+      try {
+        tiragensList = JSON.parse(quote.grafica_tiragens)
+      } catch {
+        tiragensList = []
+      }
+    }
+
+    const tiragemAlvo = parseInt(tiragemValorizacao, 10)
+    const linha = tiragensList.find((t) => t.tiragem === tiragemAlvo)
+    if (linha) {
+      const valorLote = linha.valor_total || linha.tiragem * linha.valor_unitario
+      total += valorLote
+    }
+  }
+
+  return total
+}
+
 export function getPrazoDestaque(quote: Quote): PrazoStatusInfo | null {
   // Apenas relevante para orçamentos enviados sem resposta definitiva (Enviado ou Visualizado)
   if (quote.status !== 'Enviado' && quote.status !== 'Visualizado') {

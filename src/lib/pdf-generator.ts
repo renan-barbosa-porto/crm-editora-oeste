@@ -1,5 +1,5 @@
 import type { Quote, QuoteItem, GraficaTiragemRow, CompanySettings } from '@/types/crm'
-import { DEFAULT_COMPANY_SETTINGS } from '@/services/settings'
+import { DEFAULT_COMPANY_SETTINGS, getCompanyLogoUrl } from '@/services/settings'
 
 export const CONDICOES_PADRAO_EDITORA_OESTE =
   DEFAULT_COMPANY_SETTINGS.texto_condicoes_padrao ||
@@ -71,6 +71,8 @@ export function buildProposalPrintHTML(params: {
   condicoes: string
   descontoPercentual: number
   companySettings?: Partial<CompanySettings>
+  incluiEditorial?: boolean
+  numeroReferencia?: string
 }): string {
   const {
     quote,
@@ -80,7 +82,12 @@ export function buildProposalPrintHTML(params: {
     condicoes,
     descontoPercentual,
     companySettings,
+    incluiEditorial: paramIncluiEditorial,
+    numeroReferencia: paramNumeroReferencia,
   } = params
+
+  const incluiEditorial =
+    paramIncluiEditorial !== undefined ? paramIncluiEditorial : quote.inclui_editorial !== false
 
   const companyNome = companySettings?.nome_comercial || DEFAULT_COMPANY_SETTINGS.nome_comercial
   const companyRazao = companySettings?.razao_social || DEFAULT_COMPANY_SETTINGS.razao_social
@@ -91,13 +98,20 @@ export function buildProposalPrintHTML(params: {
   const companyValidadeDias =
     companySettings?.validade_proposta_dias ?? DEFAULT_COMPANY_SETTINGS.validade_proposta_dias ?? 15
 
+  const logoUrl = getCompanyLogoUrl(companySettings)
+
   const clienteNome = quote.expand?.contact_id?.nome || quote.expand?.lead_id?.nome || 'Cliente'
   const clienteEmail = quote.expand?.contact_id?.email || quote.expand?.lead_id?.email || ''
   const clienteTelefone =
     quote.expand?.contact_id?.telefone || quote.expand?.lead_id?.telefone || ''
   const clienteEmpresa = quote.expand?.contact_id?.empresa || quote.expand?.lead_id?.empresa || ''
 
-  const codigo = quote.codigo || 'ORC-26152'
+  // Número da proposta exatamente como digitado pelo usuário (sem fallback automático fixo se estiver vazio)
+  const refDigitada =
+    paramNumeroReferencia !== undefined
+      ? paramNumeroReferencia.trim()
+      : (quote.numero_referencia || quote.codigo || '').trim()
+
   const dataHoje = new Date().toLocaleDateString('pt-BR', {
     day: '2-digit',
     month: '2-digit',
@@ -119,23 +133,23 @@ export function buildProposalPrintHTML(params: {
   const valorDesconto = (subtotalEditorial * (descontoPercentual || 0)) / 100
   const totalEditorialLiquido = Math.max(0, subtotalEditorial - valorDesconto)
 
-  // Itens HTML
+  // Itens HTML da Parte 1
   const itemsRowsHtml =
     items.length > 0
       ? items
           .map(
             (it, idx) => `
-        <tr style="border-bottom: 1px solid #E5DFD6;">
-          <td style="padding: 10px 12px; font-size: 13px; color: #1E1B16; vertical-align: top;">
-            <div style="font-weight: 600; line-height: 1.4;">${idx + 1}. ${escapeHtml(it.descricao)}</div>
+        <tr style="border-bottom: 1px solid #E5E5E5;">
+          <td style="padding: 7px 8px; font-size: 12px; color: #000000; vertical-align: top;">
+            ${idx + 1}. ${escapeHtml(it.descricao)}
           </td>
-          <td style="padding: 10px 12px; font-size: 13px; text-align: center; color: #4A4238; vertical-align: top; white-space: nowrap;">
+          <td style="padding: 7px 8px; font-size: 12px; text-align: center; color: #000000; vertical-align: top; white-space: nowrap;">
             ${it.quantidade}
           </td>
-          <td style="padding: 10px 12px; font-size: 13px; text-align: right; color: #1E1B16; font-weight: 600; font-family: monospace; vertical-align: top; white-space: nowrap;">
+          <td style="padding: 7px 8px; font-size: 12px; text-align: right; color: #000000; font-family: monospace; vertical-align: top; white-space: nowrap;">
             ${formatCurrencyBRL(it.valor_unitario)}
           </td>
-          <td style="padding: 10px 12px; font-size: 13px; text-align: right; color: #B3541E; font-weight: 700; font-family: monospace; vertical-align: top; white-space: nowrap;">
+          <td style="padding: 7px 8px; font-size: 12px; text-align: right; color: #000000; font-family: monospace; vertical-align: top; white-space: nowrap;">
             ${formatCurrencyBRL((it.quantidade || 0) * (it.valor_unitario || 0))}
           </td>
         </tr>`,
@@ -143,7 +157,7 @@ export function buildProposalPrintHTML(params: {
           .join('')
       : `
         <tr>
-          <td colspan="4" style="padding: 14px; text-align: center; color: #8A8178; font-size: 13px;">
+          <td colspan="4" style="padding: 10px; text-align: center; color: #666666; font-size: 12px;">
             Nenhum item editorial especificado nesta proposta.
           </td>
         </tr>`
@@ -155,15 +169,15 @@ export function buildProposalPrintHTML(params: {
           .map((row) => {
             const tot = row.valor_total || row.tiragem * row.valor_unitario
             return `
-        <tr style="border-bottom: 1px solid #E5DFD6;">
-          <td style="padding: 8px 12px; font-size: 13px; color: #1E1B16; font-weight: 600;">
+        <tr style="border-bottom: 1px solid #E5E5E5;">
+          <td style="padding: 7px 8px; font-size: 12px; color: #000000;">
             ${row.tiragem} ${row.tiragem === 1 ? 'exemplar' : 'exemplares'}
-            ${row.descricao && row.descricao !== `${row.tiragem} exemplares` ? `<span style="font-weight: normal; color: #666; font-size: 12px;"> (${escapeHtml(row.descricao)})</span>` : ''}
+            ${row.descricao && row.descricao !== `${row.tiragem} exemplares` ? `<span style="color: #555555; font-size: 11px;"> (${escapeHtml(row.descricao)})</span>` : ''}
           </td>
-          <td style="padding: 8px 12px; font-size: 13px; text-align: right; color: #4A4238; font-family: monospace;">
+          <td style="padding: 7px 8px; font-size: 12px; text-align: right; color: #000000; font-family: monospace;">
             ${formatCurrencyBRL(row.valor_unitario)}/un
           </td>
-          <td style="padding: 8px 12px; font-size: 13px; text-align: right; color: #1E1B16; font-weight: 700; font-family: monospace;">
+          <td style="padding: 7px 8px; font-size: 12px; text-align: right; color: #000000; font-family: monospace;">
             ${formatCurrencyBRL(tot)}
           </td>
         </tr>`
@@ -171,218 +185,24 @@ export function buildProposalPrintHTML(params: {
           .join('')
       : `
         <tr>
-          <td colspan="3" style="padding: 12px; text-align: center; color: #8A8178; font-size: 13px;">
+          <td colspan="3" style="padding: 10px; text-align: center; color: #666666; font-size: 12px;">
             Sob consulta conforme tiragem desejada.
           </td>
         </tr>`
 
-  return `<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-  <meta charset="UTF-8">
-  <title>Proposta Comercial — ${escapeHtml(codigo)} — ${escapeHtml(clienteNome)}</title>
-  <style>
-    @page {
-      size: A4 portrait;
-      margin: 15mm 15mm 18mm 15mm;
-    }
-    * {
-      box-sizing: border-box;
-      -webkit-print-color-adjust: exact !important;
-      print-color-adjust: exact !important;
-    }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-      color: #1E1B16;
-      background-color: #ffffff;
-      margin: 0;
-      padding: 0;
-      font-size: 13px;
-      line-height: 1.5;
-    }
-    .page-container {
-      max-width: 800px;
-      margin: 0 auto;
-      padding: 10px 20px;
-    }
-    .header-box {
-      border-bottom: 2px solid #B3541E;
-      padding-bottom: 14px;
-      margin-bottom: 16px;
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      gap: 16px;
-    }
-    .brand-title {
-      font-family: Georgia, "Times New Roman", serif;
-      font-size: 24px;
-      font-weight: bold;
-      color: #B3541E;
-      letter-spacing: -0.5px;
-      margin: 0 0 4px 0;
-    }
-    .brand-sub {
-      font-size: 12px;
-      color: #666;
-      margin: 0;
-      line-height: 1.4;
-    }
-    .proposal-meta {
-      text-align: right;
-      font-size: 12px;
-      color: #4A4238;
-    }
-    .proposal-ref {
-      display: inline-block;
-      font-family: monospace;
-      font-size: 14px;
-      font-weight: 700;
-      color: #B3541E;
-      background: #FAF3EC;
-      padding: 4px 10px;
-      border-radius: 4px;
-      border: 1px solid #E5DFD6;
-      margin-bottom: 4px;
-    }
-    .client-card {
-      background: #FAF8F5;
-      border: 1px solid #E5DFD6;
-      border-left: 4px solid #B3541E;
-      border-radius: 6px;
-      padding: 12px 16px;
-      margin-bottom: 18px;
-    }
-    .section-title {
-      font-family: Georgia, "Times New Roman", serif;
-      font-size: 15px;
-      font-weight: bold;
-      color: #1E1B16;
-      border-bottom: 1px solid #E5DFD6;
-      padding-bottom: 6px;
-      margin: 18px 0 10px 0;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-    .section-badge {
-      background: #B3541E;
-      color: white;
-      font-size: 10px;
-      font-weight: bold;
-      padding: 2px 7px;
-      border-radius: 3px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-bottom: 12px;
-    }
-    th {
-      background: #FAF8F5;
-      border-bottom: 2px solid #E5DFD6;
-      padding: 8px 12px;
-      font-size: 11px;
-      font-weight: bold;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      color: #666;
-    }
-    .subtotal-box {
-      background: #FAF8F5;
-      border: 1px solid #E5DFD6;
-      border-radius: 6px;
-      padding: 10px 16px;
-      margin: 8px 0 16px 0;
-      text-align: right;
-    }
-    .spec-box {
-      background: #FAF8F5;
-      border: 1px solid #E5DFD6;
-      border-radius: 6px;
-      padding: 10px 14px;
-      font-size: 12px;
-      color: #333;
-      white-space: pre-line;
-      line-height: 1.55;
-      margin-bottom: 12px;
-    }
-    .conditions-box {
-      background: #FFFFFF;
-      border: 1px dashed #D5CDC4;
-      border-radius: 6px;
-      padding: 10px 14px;
-      font-size: 11.5px;
-      color: #4A4238;
-      white-space: pre-line;
-      line-height: 1.6;
-      margin-top: 14px;
-    }
-    .footer-note {
-      margin-top: 22px;
-      padding-top: 12px;
-      border-top: 1px solid #E5DFD6;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      font-size: 11px;
-      color: #8A8178;
-    }
-    @media print {
-      body {
-        margin: 0;
-      }
-      .no-print {
-        display: none !important;
-      }
-      .page-break {
-        page-break-before: always;
-      }
-    }
-  </style>
-</head>
-<body>
-  <div class="page-container">
-    <!-- Cabeçalho com dados da empresa e referência da proposta -->
-    <div class="header-box">
-      <div>
-        <h1 class="brand-title">${escapeHtml(companyNome)}</h1>
-        <p class="brand-sub">
-          <strong>${escapeHtml(companyRazao)}</strong><br>
-          ${companyCnpj ? `CNPJ: ${escapeHtml(companyCnpj)}` : ''}${companyCnpj && companyCidade ? ' • ' : ''}${companyCidade ? escapeHtml(companyCidade) : ''}<br>
-          ${companyPortal ? `Portal: ${escapeHtml(companyPortal)}` : ''}${companyPortal && companyTelefone ? ' • ' : ''}${companyTelefone ? `WhatsApp: ${escapeHtml(companyTelefone)}` : ''}
-        </p>
-      </div>
-      <div class="proposal-meta">
-        <div class="proposal-ref">REF. PROPOSTA: ${escapeHtml(codigo)}</div>
-        <div><strong>Data de Emissão:</strong> ${escapeHtml(dataEnvioFmt)}</div>
-        <div><strong>Projeto:</strong> ${escapeHtml(quote.titulo)}</div>
-      </div>
-    </div>
+  // Header da empresa:
+  // RETIRAR o texto "Editora Oeste" do cabeçalho do PDF (ficou redundante com o logo).
+  // Se tiver logo, mostra apenas o logo + dados fiscais sutis. Se não tiver logo, mostra apenas o nome comercial de forma discreta.
+  const headerBrandHtml = logoUrl
+    ? `<img src="${escapeHtml(logoUrl)}" alt="Logo" style="max-height: 52px; max-width: 190px; object-contain: contain; display: block; margin-bottom: 4px;" />`
+    : `<div style="font-size: 18px; font-weight: 600; color: #000000; margin-bottom: 2px;">${escapeHtml(companyNome)}</div>`
 
-    <!-- Dados do Cliente -->
-    <div class="client-card">
-      <div style="font-size: 11px; font-weight: bold; text-transform: uppercase; color: #8A8178; letter-spacing: 0.5px; margin-bottom: 4px;">
-        Cliente / Contratante
-      </div>
-      <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 8px;">
-        <div>
-          <div style="font-size: 15px; font-weight: bold; color: #1E1B16;">${escapeHtml(clienteNome)}</div>
-          ${clienteEmpresa ? `<div style="font-size: 12px; color: #4A4238;">${escapeHtml(clienteEmpresa)}</div>` : ''}
-        </div>
-        <div style="font-size: 12px; color: #4A4238; text-align: right;">
-          ${clienteTelefone ? `<div><strong>WhatsApp:</strong> ${escapeHtml(clienteTelefone)}</div>` : ''}
-          ${clienteEmail ? `<div><strong>Email:</strong> ${escapeHtml(clienteEmail)}</div>` : ''}
-        </div>
-      </div>
-    </div>
-
+  // Bloco Parte 1 HTML (Editorial) — opcional
+  const parte1Html = incluiEditorial
+    ? `
     <!-- PARTE 1 — PRODUÇÃO EDITORIAL -->
     <div class="section-title">
-      <span class="section-badge">Parte 1</span>
-      <span>Produção Editorial</span>
+      Parte 1 — Produção Editorial
     </div>
 
     <table>
@@ -400,42 +220,229 @@ export function buildProposalPrintHTML(params: {
     </table>
 
     <div class="subtotal-box">
-      <div style="font-size: 12px; color: #666;">
-        Subtotal Produção Editorial: <strong style="font-family: monospace; color: #1E1B16;">${formatCurrencyBRL(subtotalEditorial)}</strong>
+      <div style="font-size: 12px; color: #000000;">
+        Subtotal Produção Editorial: <span style="font-family: monospace;">${formatCurrencyBRL(subtotalEditorial)}</span>
       </div>
       ${
         valorDesconto > 0
           ? `
-      <div style="font-size: 12px; color: #B3261E; margin-top: 2px;">
-        Desconto Comercial (${descontoPercentual}%): <strong style="font-family: monospace;">- ${formatCurrencyBRL(valorDesconto)}</strong>
+      <div style="font-size: 12px; color: #000000; margin-top: 2px;">
+        Desconto (${descontoPercentual}%): <span style="font-family: monospace;">- ${formatCurrencyBRL(valorDesconto)}</span>
       </div>`
           : ''
       }
-      <div style="font-size: 15px; font-weight: bold; color: #B3541E; margin-top: 4px; font-family: Georgia, serif;">
-        Total Parcial Editorial: <span style="font-family: monospace;">${formatCurrencyBRL(totalEditorialLiquido)}</span>
+      <div style="font-size: 13px; color: #000000; margin-top: 3px; font-weight: 600;">
+        Total Editorial: <span style="font-family: monospace;">${formatCurrencyBRL(totalEditorialLiquido)}</span>
+      </div>
+    </div>
+`
+    : ''
+
+  const tituloParte2 = incluiEditorial ? 'Parte 2 — Produção Gráfica' : 'Produção Gráfica'
+
+  return `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Proposta Comercial${refDigitada ? ` — ${escapeHtml(refDigitada)}` : ''} — ${escapeHtml(clienteNome)}</title>
+  <style>
+    @page {
+      size: A4 portrait;
+      margin: 14mm 14mm 16mm 14mm;
+    }
+    * {
+      box-sizing: border-box;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      color: #000000;
+      background-color: #ffffff;
+      margin: 0;
+      padding: 0;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .page-container {
+      max-width: 780px;
+      margin: 0 auto;
+      padding: 6px 14px;
+    }
+    .header-box {
+      border-bottom: 1px solid #000000;
+      padding-bottom: 12px;
+      margin-bottom: 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+    }
+    .brand-col {
+      flex: 1;
+    }
+    .brand-sub {
+      font-size: 11px;
+      color: #222222;
+      margin: 0;
+      line-height: 1.35;
+    }
+    .proposal-meta {
+      text-align: right;
+      font-size: 11.5px;
+      color: #000000;
+      line-height: 1.4;
+      white-space: nowrap;
+    }
+    .proposal-ref {
+      font-size: 13px;
+      font-weight: 600;
+      color: #000000;
+      margin-bottom: 3px;
+    }
+    .client-card {
+      border: 1px solid #D0D0D0;
+      border-radius: 4px;
+      padding: 9px 12px;
+      margin-bottom: 14px;
+      background: #FAFAFA;
+    }
+    .section-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: #000000;
+      border-bottom: 1px solid #000000;
+      padding-bottom: 4px;
+      margin: 16px 0 8px 0;
+      text-transform: none;
+      letter-spacing: 0.2px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 8px;
+    }
+    th {
+      border-bottom: 1px solid #000000;
+      padding: 6px 8px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      color: #000000;
+      background: transparent;
+    }
+    .subtotal-box {
+      border-top: 1px solid #D0D0D0;
+      padding: 6px 4px;
+      margin: 4px 0 12px 0;
+      text-align: right;
+    }
+    .spec-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: #000000;
+      margin: 8px 0 3px 0;
+    }
+    .spec-box {
+      border: 1px solid #D0D0D0;
+      border-radius: 3px;
+      padding: 8px 10px;
+      font-size: 11.5px;
+      color: #000000;
+      white-space: pre-line;
+      line-height: 1.45;
+      margin-bottom: 10px;
+      background: #FAFAFA;
+    }
+    .conditions-box {
+      border: 1px solid #D0D0D0;
+      border-radius: 3px;
+      padding: 8px 10px;
+      font-size: 11px;
+      color: #111111;
+      white-space: pre-line;
+      line-height: 1.45;
+      margin-top: 8px;
+      background: #FFFFFF;
+    }
+    .footer-note {
+      margin-top: 18px;
+      padding-top: 8px;
+      border-top: 1px solid #E0E0E0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 10.5px;
+      color: #444444;
+    }
+    @media print {
+      body {
+        margin: 0;
+      }
+      .no-print {
+        display: none !important;
+      }
+      .page-break {
+        page-break-before: always;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page-container">
+    <!-- Cabeçalho sóbrio com logo e dados da empresa -->
+    <div class="header-box">
+      <div class="brand-col">
+        ${headerBrandHtml}
+        <p class="brand-sub">
+          ${escapeHtml(companyRazao)}<br>
+          ${companyCnpj ? `CNPJ: ${escapeHtml(companyCnpj)}` : ''}${companyCnpj && companyCidade ? ' • ' : ''}${companyCidade ? escapeHtml(companyCidade) : ''}<br>
+          ${companyPortal ? `Portal: ${escapeHtml(companyPortal)}` : ''}${companyPortal && companyTelefone ? ' • ' : ''}${companyTelefone ? `WhatsApp: ${escapeHtml(companyTelefone)}` : ''}
+        </p>
+      </div>
+      <div class="proposal-meta">
+        ${refDigitada ? `<div class="proposal-ref">Nº Proposta: ${escapeHtml(refDigitada)}</div>` : ''}
+        <div>Emissão: ${escapeHtml(dataEnvioFmt)}</div>
+        <div>Projeto: ${escapeHtml(quote.titulo)}</div>
       </div>
     </div>
 
-    <!-- PARTE 2 — PRODUÇÃO GRÁFICA (Impressão do Livro) -->
-    <div class="section-title" style="margin-top: 24px;">
-      <span class="section-badge">Parte 2</span>
-      <span>Produção Gráfica (Impressão do Livro)</span>
+    <!-- Dados do Cliente -->
+    <div class="client-card">
+      <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 8px;">
+        <div>
+          <div style="font-size: 10px; text-transform: uppercase; color: #555555; letter-spacing: 0.5px; margin-bottom: 2px;">
+            Cliente / Contratante
+          </div>
+          <div style="font-size: 13px; font-weight: 600; color: #000000;">${escapeHtml(clienteNome)}</div>
+          ${clienteEmpresa ? `<div style="font-size: 11px; color: #333333;">${escapeHtml(clienteEmpresa)}</div>` : ''}
+        </div>
+        <div style="font-size: 11.5px; color: #000000; text-align: right;">
+          ${clienteTelefone ? `<div>WhatsApp: ${escapeHtml(clienteTelefone)}</div>` : ''}
+          ${clienteEmail ? `<div>Email: ${escapeHtml(clienteEmail)}</div>` : ''}
+        </div>
+      </div>
     </div>
 
-    <div style="font-size: 11px; font-weight: bold; text-transform: uppercase; color: #8A8178; letter-spacing: 0.5px; margin-bottom: 4px;">
-      Especificações Técnicas
+    <!-- PARTE 1 (Opcional) -->
+    ${parte1Html}
+
+    <!-- PARTE 2 — PRODUÇÃO GRÁFICA -->
+    <div class="section-title">
+      ${escapeHtml(tituloParte2)}
     </div>
+
+    <div class="spec-label">Especificações Técnicas</div>
     <div class="spec-box">${escapeHtml(especificacoesGrafica)}</div>
 
-    <div style="font-size: 11px; font-weight: bold; text-transform: uppercase; color: #8A8178; letter-spacing: 0.5px; margin-bottom: 4px;">
-      Tabela de Impressão por Tiragem (Flexível sob demanda)
-    </div>
+    <div class="spec-label">Tabela de Produção por Tiragem</div>
     <table>
       <thead>
         <tr>
           <th style="text-align: left;">Tiragem Solicitada</th>
           <th style="text-align: right; width: 140px;">Preço Unitário</th>
-          <th style="text-align: right; width: 150px;">Valor Total do Lote</th>
+          <th style="text-align: right; width: 150px;">Valor Total</th>
         </tr>
       </thead>
       <tbody>
@@ -443,10 +450,9 @@ export function buildProposalPrintHTML(params: {
       </tbody>
     </table>
 
-    <!-- CONDIÇÕES GERAIS E RODAPÉ -->
-    <div class="section-title" style="margin-top: 20px;">
-      <span class="section-badge" style="background: #4A4238;">Condições</span>
-      <span>Condições Gerais de Produção & Entrega</span>
+    <!-- CONDIÇÕES GERAIS -->
+    <div class="section-title" style="margin-top: 14px;">
+      Condições Gerais de Produção & Entrega
     </div>
 
     <div class="conditions-box">
@@ -455,18 +461,16 @@ export function buildProposalPrintHTML(params: {
 
     <div class="footer-note">
       <div>
-        <strong>${escapeHtml(companyNome)}</strong> — Proposta válida por ${companyValidadeDias} dias a contar da data de emissão.
+        ${escapeHtml(companyNome)} — Proposta válida por ${companyValidadeDias} dias a contar da emissão.
       </div>
       <div>
-        Documento gerado eletronicamente em ${escapeHtml(dataHoje)}.
+        Documento gerado em ${escapeHtml(dataHoje)}.
       </div>
     </div>
   </div>
 
   <script>
-    // Se aberto em nova aba de impressão, abre diálogo direto
     window.addEventListener('load', () => {
-      // Auto-trigger print se solicitado via hash
       if (window.location.hash === '#print') {
         window.print();
       }
@@ -498,6 +502,8 @@ export function openProposalPdfWindow(params: {
   condicoes: string
   descontoPercentual: number
   companySettings?: Partial<CompanySettings>
+  incluiEditorial?: boolean
+  numeroReferencia?: string
   autoPrint?: boolean
 }) {
   const html = buildProposalPrintHTML(params)

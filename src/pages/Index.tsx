@@ -24,7 +24,8 @@ import { NewLeadModal } from '@/components/modals/NewLeadModal'
 import { NewQuoteModal } from '@/components/modals/NewQuoteModal'
 import { ProposalPdfModal } from '@/components/modals/ProposalPdfModal'
 import { cn } from '@/lib/utils'
-import { getPrazoDestaque, getQuoteDataEnvio } from '@/lib/quote-utils'
+import { getPrazoDestaque, getQuoteDataEnvio, calcularValorQuote } from '@/lib/quote-utils'
+import { Lock } from 'lucide-react'
 import { useCompanySettings } from '@/contexts/SettingsContext'
 import {
   parseTiragens,
@@ -58,19 +59,17 @@ export default function Index() {
       setLeads(leadsData)
       setQuotes(quotesData)
 
-      // Buscar valores dos orçamentos
+      // Buscar valores dos orçamentos considerando a tiragem de valorização
       const valuesMap: Record<string, number> = {}
       for (const q of quotesData) {
         try {
-          const items = await getQuoteItems(q.id)
-          const subtotal = items.reduce(
-            (acc, it) => acc + (it.quantidade || 0) * (it.valor_unitario || 0),
-            0,
-          )
-          const desc = (subtotal * (q.desconto_percentual || 0)) / 100
-          valuesMap[q.id] = Math.max(0, subtotal - desc)
+          let items = q.expand?.quote_items_via_quote_id
+          if (!items) {
+            items = await getQuoteItems(q.id)
+          }
+          valuesMap[q.id] = calcularValorQuote(q, items)
         } catch {
-          valuesMap[q.id] = 0
+          valuesMap[q.id] = calcularValorQuote(q)
         }
       }
       setQuoteValues(valuesMap)
@@ -340,8 +339,13 @@ export default function Index() {
                     >
                       <div className="space-y-1 min-w-0 flex-1">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-mono text-xs font-semibold text-[#8A8178]">
-                            {quote.codigo || 'ORC'}
+                          <span className="font-mono text-xs font-semibold text-[#8A8178] flex items-center gap-1">
+                            {quote.numero_referencia || quote.codigo || 'ORC'}
+                            {quote.pdf_locked && (
+                              <span title="Congelado após PDF" className="inline-flex items-center">
+                                <Lock className="w-3 h-3 text-amber-600" />
+                              </span>
+                            )}
                           </span>
                           <span className="font-semibold text-sm text-[#1E1B16] truncate">
                             {quote.titulo}
@@ -359,7 +363,14 @@ export default function Index() {
                       </div>
 
                       <div className="flex items-center gap-3 justify-between sm:justify-end">
-                        <span className="font-mono font-bold text-sm text-[#B3541E]">{valor}</span>
+                        {quote.tiragem_valorizacao === 'combinar' &&
+                        quote.inclui_editorial === false ? (
+                          <span className="text-xs font-mono text-[#8A8178]">A combinar</span>
+                        ) : (
+                          <span className="font-mono font-bold text-sm text-[#B3541E]">
+                            {valor}
+                          </span>
+                        )}
 
                         <div
                           className="flex items-center gap-1.5"

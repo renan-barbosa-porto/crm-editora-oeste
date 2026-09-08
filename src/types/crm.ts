@@ -59,8 +59,14 @@ export interface GraficaTiragemRow {
   valor_total?: number
 }
 
+export type TiragemValorizacao = '1' | '50' | '100' | 'combinar'
+
 export interface Quote extends RecordModel {
   codigo?: string
+  numero_referencia?: string
+  pdf_locked?: boolean
+  tiragem_valorizacao?: TiragemValorizacao | string
+  inclui_editorial?: boolean
   titulo: string
   lead_id: string
   contact_id?: string
@@ -117,4 +123,5 @@ export interface CompanySettings extends RecordModel {
   condicoes_entrega?: string
   validade_proposta_dias?: number
   texto_condicoes_padrao?: string
+  logo?: string
 }

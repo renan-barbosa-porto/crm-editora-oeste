@@ -23,7 +23,8 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { NewQuoteModal } from '@/components/modals/NewQuoteModal'
 import { ProposalPdfModal } from '@/components/modals/ProposalPdfModal'
 import { cn } from '@/lib/utils'
-import { getPrazoDestaque, getQuoteDataEnvio } from '@/lib/quote-utils'
+import { getPrazoDestaque, getQuoteDataEnvio, calcularValorQuote } from '@/lib/quote-utils'
+import { Lock } from 'lucide-react'
 import { useCompanySettings } from '@/contexts/SettingsContext'
 import {
   parseTiragens,
@@ -63,15 +64,13 @@ export default function Quotes() {
       const valuesMap: Record<string, number> = {}
       for (const q of allQuotes) {
         try {
-          const items = await getQuoteItems(q.id)
-          const subtotal = items.reduce(
-            (acc, it) => acc + (it.quantidade || 0) * (it.valor_unitario || 0),
-            0,
-          )
-          const desc = (subtotal * (q.desconto_percentual || 0)) / 100
-          valuesMap[q.id] = Math.max(0, subtotal - desc)
+          let items = q.expand?.quote_items_via_quote_id
+          if (!items) {
+            items = await getQuoteItems(q.id)
+          }
+          valuesMap[q.id] = calcularValorQuote(q, items)
         } catch {
-          valuesMap[q.id] = 0
+          valuesMap[q.id] = calcularValorQuote(q)
         }
       }
       setQuoteValues(valuesMap)
@@ -331,10 +330,10 @@ export default function Quotes() {
               <table className="w-full text-left text-xs sm:text-sm">
                 <thead className="bg-[#FAF8F5] border-b border-[#E5DFD6] text-[#8A8178] uppercase font-semibold tracking-wider text-[11px]">
                   <tr>
-                    <th className="py-3 px-4">ID / Código</th>
+                    <th className="py-3 px-4">ID / Referência</th>
                     <th className="py-3 px-4">Cliente</th>
                     <th className="py-3 px-4">Título / Proposta</th>
-                    <th className="py-3 px-4 text-right">Valor Editorial</th>
+                    <th className="py-3 px-4 text-right">Valor Proposta</th>
                     <th className="py-3 px-4">Data de Envio</th>
                     <th className="py-3 px-4 text-center">Status / Prazo</th>
                     <th className="py-3 px-4 text-right">Ações</th>
@@ -388,7 +387,14 @@ export default function Quotes() {
                         )}
                       >
                         <td className="py-3.5 px-4 font-mono font-semibold text-[#8A8178] text-xs">
-                          {quote.codigo || 'ORC-TEMP'}
+                          <div className="flex items-center gap-1.5">
+                            <span>{quote.numero_referencia || quote.codigo || 'ORC-TEMP'}</span>
+                            {quote.pdf_locked && (
+                              <span title="Congelado após PDF" className="inline-flex items-center">
+                                <Lock className="w-3 h-3 text-amber-600" />
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td className="py-3.5 px-4 font-semibold text-[#1E1B16]">{clienteNome}</td>
                         <td className="py-3.5 px-4 text-[#1E1B16] font-medium max-w-xs truncate">
@@ -403,7 +409,12 @@ export default function Quotes() {
                           )}
                         </td>
                         <td className="py-3.5 px-4 text-right font-bold text-[#B3541E] font-mono">
-                          {valorFormatado}
+                          {quote.tiragem_valorizacao === 'combinar' &&
+                          quote.inclui_editorial === false ? (
+                            <span className="text-xs font-normal text-[#8A8178]">A combinar</span>
+                          ) : (
+                            valorFormatado
+                          )}
                         </td>
                         <td className="py-3.5 px-4 text-xs text-[#8A8178]">{dataEnvioFmt}</td>
                         <td className="py-3.5 px-4 text-center">

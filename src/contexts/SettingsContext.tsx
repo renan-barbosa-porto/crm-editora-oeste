@@ -10,7 +10,7 @@ interface SettingsContextType {
   settings: CompanySettings
   loading: boolean
   reloadSettings: () => Promise<void>
-  saveSettings: (data: Partial<CompanySettings>) => Promise<CompanySettings>
+  saveSettings: (data: Partial<CompanySettings> | FormData) => Promise<CompanySettings>
 }
 
 const fallbackRecord: CompanySettings = {
@@ -59,7 +59,7 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     reloadSettings()
   }, [reloadSettings])
 
-  const saveSettings = async (data: Partial<CompanySettings>) => {
+  const saveSettings = async (data: Partial<CompanySettings> | FormData) => {
     const updated = await updateCompanySettings(settings.id, data)
     setSettings(updated)
     return updated

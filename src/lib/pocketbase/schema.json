@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-07T15:02:26.439Z",
+  "generatedAt": "2026-09-08T18:48:01.697Z",
   "collections": [
     {
       "name": "users",
@@ -334,6 +334,31 @@
           "type": "text",
           "required": false,
           "system": false
+        },
+        {
+          "name": "numero_referencia",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "pdf_locked",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "tiragem_valorizacao",
+          "type": "select",
+          "required": false,
+          "system": false,
+          "selectValues": ["1", "50", "100", "combinar"]
+        },
+        {
+          "name": "inclui_editorial",
+          "type": "bool",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": [
@@ -606,6 +631,12 @@
           "required": false,
           "system": false,
           "autodateTriggers": ["onCreate", "onUpdate"]
+        },
+        {
+          "name": "logo",
+          "type": "file",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": []

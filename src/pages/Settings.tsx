@@ -18,7 +18,11 @@ import {
   Sparkles,
   CheckCircle2,
   Printer,
+  Upload,
+  Image as ImageIcon,
+  Trash2,
 } from 'lucide-react'
+import { getCompanyLogoUrl } from '@/services/settings'
 
 export default function Settings() {
   const { settings, loading, saveSettings } = useCompanySettings()
@@ -38,6 +42,11 @@ export default function Settings() {
   const [validadePropostaDias, setValidadePropostaDias] = useState<number>(15)
   const [textoCondicoesPadrao, setTextoCondicoesPadrao] = useState('')
 
+  // Logo da empresa
+  const [logoFile, setLogoFile] = useState<File | null>(null)
+  const [logoPreview, setLogoPreview] = useState<string | null>(null)
+  const [removeLogo, setRemoveLogo] = useState(false)
+
   const [isSaving, setIsSaving] = useState(false)
 
   // Preenche o formulário quando as configurações forem carregadas
@@ -55,8 +64,37 @@ export default function Settings() {
       setCondicoesEntrega(settings.condicoes_entrega || '')
       setValidadePropostaDias(settings.validade_proposta_dias ?? 15)
       setTextoCondicoesPadrao(settings.texto_condicoes_padrao || '')
+      setLogoPreview(getCompanyLogoUrl(settings))
+      setLogoFile(null)
+      setRemoveLogo(false)
     }
   }, [settings])
+
+  const handleLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (!file.type.startsWith('image/')) {
+      toast({
+        title: 'Formato inválido',
+        description: 'Selecione uma imagem (PNG, JPG, SVG ou WEBP).',
+        variant: 'destructive',
+      })
+      return
+    }
+    setLogoFile(file)
+    setRemoveLogo(false)
+    const reader = new FileReader()
+    reader.onload = (event) => {
+      setLogoPreview(event.target?.result as string)
+    }
+    reader.readAsDataURL(file)
+  }
+
+  const handleRemoveLogo = () => {
+    setLogoFile(null)
+    setLogoPreview(null)
+    setRemoveLogo(true)
+  }
 
   const handleGerarTextoCondicoesAutomatico = () => {
     const gerado = gerarTextoCondicoes({
@@ -87,20 +125,28 @@ export default function Settings() {
 
     try {
       setIsSaving(true)
-      await saveSettings({
-        nome_comercial: nomeComercial.trim(),
-        razao_social: razaoSocial.trim(),
-        cnpj: cnpj.trim(),
-        cidade_uf: cidadeUf.trim(),
-        telefone: telefone.trim(),
-        email: email.trim(),
-        portal: portal.trim(),
-        prazo_execucao_dias: Number(prazoExecucaoDias) || 0,
-        condicoes_pagamento: condicoesPagamento.trim(),
-        condicoes_entrega: condicoesEntrega.trim(),
-        validade_proposta_dias: Number(validadePropostaDias) || 0,
-        texto_condicoes_padrao: textoCondicoesPadrao.trim(),
-      })
+
+      const formData = new FormData()
+      formData.append('nome_comercial', nomeComercial.trim())
+      formData.append('razao_social', razaoSocial.trim())
+      formData.append('cnpj', cnpj.trim())
+      formData.append('cidade_uf', cidadeUf.trim())
+      formData.append('telefone', telefone.trim())
+      formData.append('email', email.trim())
+      formData.append('portal', portal.trim())
+      formData.append('prazo_execucao_dias', String(Number(prazoExecucaoDias) || 0))
+      formData.append('condicoes_pagamento', condicoesPagamento.trim())
+      formData.append('condicoes_entrega', condicoesEntrega.trim())
+      formData.append('validade_proposta_dias', String(Number(validadePropostaDias) || 0))
+      formData.append('texto_condicoes_padrao', textoCondicoesPadrao.trim())
+
+      if (logoFile) {
+        formData.append('logo', logoFile)
+      } else if (removeLogo) {
+        formData.append('logo', '')
+      }
+
+      await saveSettings(formData)
 
       toast({
         title: 'Configurações salvas com sucesso!',
@@ -170,6 +216,67 @@ export default function Settings() {
           </CardHeader>
 
           <CardContent className="p-4 sm:p-6 space-y-4">
+            {/* Campo de Logo da Empresa */}
+            <div className="p-4 rounded-lg border border-[#E5DFD6] bg-[#FAF8F5]">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                <div className="flex items-center gap-4">
+                  {logoPreview ? (
+                    <div className="relative w-24 h-16 rounded border border-[#E5DFD6] bg-white p-1 flex items-center justify-center overflow-hidden">
+                      <img
+                        src={logoPreview}
+                        alt="Logo da Empresa"
+                        className="max-h-full max-w-full object-contain"
+                      />
+                    </div>
+                  ) : (
+                    <div className="w-24 h-16 rounded border border-dashed border-[#D5CDC4] bg-white flex flex-col items-center justify-center text-[#8A8178]">
+                      <ImageIcon className="w-6 h-6 stroke-[1.5]" />
+                      <span className="text-[10px] mt-1">Sem logo</span>
+                    </div>
+                  )}
+
+                  <div>
+                    <Label className="text-xs font-semibold uppercase tracking-wider text-[#1E1B16] block">
+                      Logo da Empresa (Cabeçalho do PDF)
+                    </Label>
+                    <p className="text-xs text-[#8A8178] mt-0.5">
+                      Esta imagem substitui o texto "Editora Oeste" no cabeçalho dos orçamentos
+                      gerados. Recomendado: PNG com fundo transparente ou JPG nítido.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <label className="cursor-pointer">
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                      className="hidden"
+                      onChange={handleLogoChange}
+                    />
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md border border-[#E5DFD6] bg-white text-[#1E1B16] hover:bg-[#FAF8F5] transition-colors">
+                      <Upload className="w-3.5 h-3.5 text-[#B3541E]" />
+                      {logoPreview ? 'Trocar Logo' : 'Enviar Logo'}
+                    </span>
+                  </label>
+
+                  {logoPreview && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleRemoveLogo}
+                      className="h-8 text-xs text-[#B3261E] hover:text-[#961f18] hover:bg-white"
+                      title="Remover logo"
+                    >
+                      <Trash2 className="w-3.5 h-3.5 mr-1" />
+                      Remover
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </div>
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <Label
@@ -440,30 +547,36 @@ export default function Settings() {
 
             <div className="bg-white p-4 rounded border border-[#E5DFD6] space-y-3">
               {/* Cabeçalho */}
-              <div className="border-b-2 border-[#B3541E] pb-3 flex flex-col sm:flex-row justify-between gap-3 text-xs">
-                <div>
-                  <h3 className="font-serif text-lg font-bold text-[#B3541E]">
-                    {nomeComercial || 'Editora Oeste'}
-                  </h3>
-                  <div className="text-[#666] text-xs leading-relaxed mt-0.5">
-                    <strong>{razaoSocial || 'Editora Oeste Comunicação & Gráfica Ltda.'}</strong>
-                    <br />
-                    CNPJ: {cnpj || '14.882.910/0001-35'} • {cidadeUf || 'Campo Grande - MS'}
-                    <br />
-                    {portal ? `Portal: ${portal}` : ''} {portal && telefone ? '•' : ''}{' '}
-                    {telefone ? `WhatsApp: ${telefone}` : ''}
-                    {email ? ` • E-mail: ${email}` : ''}
+              <div className="border-b border-[#1E1B16] pb-3 flex flex-col sm:flex-row justify-between items-start gap-3 text-xs">
+                <div className="flex items-center gap-3">
+                  {logoPreview ? (
+                    <img
+                      src={logoPreview}
+                      alt="Logo"
+                      className="max-h-12 max-w-[160px] object-contain"
+                    />
+                  ) : (
+                    <span className="font-serif text-base font-semibold text-[#1E1B16]">
+                      {nomeComercial || 'Empresa'}
+                    </span>
+                  )}
+                  <div className="text-[#4A4238] text-[11px] leading-relaxed border-l border-[#E5DFD6] pl-3">
+                    <div>{razaoSocial || 'Razão Social'}</div>
+                    <div>
+                      {cnpj ? `CNPJ: ${cnpj}` : ''}
+                      {cnpj && cidadeUf ? ' • ' : ''}
+                      {cidadeUf}
+                    </div>
                   </div>
                 </div>
 
-                <div className="text-left sm:text-right text-[#4A4238] space-y-0.5">
-                  <span className="font-mono text-xs px-2 py-0.5 bg-[#FAF3EC] border border-[#E5DFD6] rounded font-bold text-[#B3541E] inline-block">
-                    REF. PROPOSTA: ORC-26152
+                <div className="text-left sm:text-right text-[#1E1B16] space-y-0.5">
+                  <span className="font-mono text-xs px-2 py-0.5 bg-[#FAF8F5] border border-[#E5DFD6] rounded text-[#1E1B16] inline-block">
+                    REF: 26152
                   </span>
-                  <div className="text-[11px] text-[#8A8178]">Proposta Comercial Oficial</div>
+                  <div className="text-[11px] text-[#8A8178]">Proposta Comercial</div>
                 </div>
               </div>
-
               {/* Rodapé */}
               <div className="pt-2 text-[11px] text-[#8A8178] border-t border-[#E5DFD6] flex flex-col sm:flex-row justify-between gap-1">
                 <div>

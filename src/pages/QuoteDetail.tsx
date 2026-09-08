@@ -42,7 +42,10 @@ import {
   BookOpen,
   Snowflake,
   ExternalLink,
+  Lock,
+  Unlock,
 } from 'lucide-react'
+import { Switch } from '@/components/ui/switch'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -65,9 +68,16 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { cn } from '@/lib/utils'
-import { getPrazoDestaque, getQuoteDataEnvio, formatWhatsAppUrl } from '@/lib/quote-utils'
+import {
+  getPrazoDestaque,
+  getQuoteDataEnvio,
+  formatWhatsAppUrl,
+  getUltimoNumeroPropostaUsado,
+  calcularValorQuote,
+} from '@/lib/quote-utils'
 import { useToast } from '@/hooks/use-toast'
 import { useCompanySettings } from '@/contexts/SettingsContext'
+import { getQuotes } from '@/services/quotes'
 
 export default function QuoteDetail() {
   const { id } = useParams<{ id: string }>()
@@ -84,7 +94,13 @@ export default function QuoteDetail() {
   const [descontoPercentual, setDescontoPercentual] = useState<number>(0)
   const [titulo, setTitulo] = useState<string>('')
   const [dataEnvio, setDataEnvio] = useState<string>('')
+  const [numeroReferencia, setNumeroReferencia] = useState<string>('')
+  const [incluiEditorial, setIncluiEditorial] = useState<boolean>(true)
+  const [tiragemValorizacao, setTiragemValorizacao] = useState<string>('50')
+  const [pdfLocked, setPdfLocked] = useState<boolean>(false)
+  const [ultimoNumeroUsado, setUltimoNumeroUsado] = useState<string | null>(null)
   const [isUpdatingDiscount, setIsUpdatingDiscount] = useState(false)
+  const [unlockConfirmOpen, setUnlockConfirmOpen] = useState(false)
 
   // Produção Gráfica e Condições (campos livres e flexíveis)
   const [especificacoesGrafica, setEspecificacoesGrafica] = useState(ESPECIFICACOES_GRAFICAS_PADRAO)
@@ -116,9 +132,11 @@ export default function QuoteDetail() {
       setQuote(q)
       setDescontoPercentual(q.desconto_percentual || 0)
       setTitulo(q.titulo)
-      setDataEnvio(
-        q.data_envio ? q.data_envio.slice(0, 10) : new Date(q.created).toISOString().slice(0, 10),
-      )
+      setDataEnvio(q.data_envio ? q.data_envio.slice(0, 10) : '')
+      setNumeroReferencia(q.numero_referencia || '')
+      setIncluiEditorial(q.inclui_editorial !== false)
+      setTiragemValorizacao(q.tiragem_valorizacao || '50')
+      setPdfLocked(Boolean(q.pdf_locked))
       setEspecificacoesGrafica(q.grafica_especificacoes || ESPECIFICACOES_GRAFICAS_PADRAO)
       setTiragens(parseTiragens(q))
       setCondicoesGerais(
@@ -127,8 +145,10 @@ export default function QuoteDetail() {
           CONDICOES_PADRAO_EDITORA_OESTE,
       )
 
-      const it = await getQuoteItems(id)
+      const [it, allQuotes] = await Promise.all([getQuoteItems(id), getQuotes()])
       setItems(it)
+      const ultimo = getUltimoNumeroPropostaUsado(allQuotes)
+      setUltimoNumeroUsado(ultimo)
 
       if (q.lead_id) {
         const convs = await getConversationsByLeadId(q.lead_id)
@@ -186,17 +206,29 @@ export default function QuoteDetail() {
     await handleStatusChange('Enviado')
   }
 
-  // Salvar Título e Data de Envio
+  // Salvar Título, Referência, Data de Envio, Tiragem de Valorização e Interruptor Editorial
   const handleSaveHeader = async () => {
     if (!id || !quote) return
-    try {
-      await updateQuote(id, {
-        titulo: titulo.trim() || quote.titulo,
-        data_envio: dataEnvio ? `${dataEnvio} 12:00:00` : undefined,
+    if (pdfLocked) {
+      toast({
+        title: 'Orçamento congelado',
+        description: 'Destrave o orçamento com o botão "Editar orçamento" para fazer alterações.',
+        variant: 'destructive',
       })
+      return
+    }
+    try {
+      const updated = await updateQuote(id, {
+        titulo: titulo.trim() || quote.titulo,
+        numero_referencia: numeroReferencia.trim(),
+        data_envio: dataEnvio ? `${dataEnvio} 12:00:00` : '',
+        tiragem_valorizacao: tiragemValorizacao,
+        inclui_editorial: incluiEditorial,
+      })
+      setQuote(updated)
       toast({
         title: 'Informações salvas',
-        description: 'Título e data de envio foram atualizados.',
+        description: 'Dados do orçamento foram atualizados.',
       })
     } catch {
       toast({
@@ -206,9 +238,61 @@ export default function QuoteDetail() {
     }
   }
 
+  // Congelar orçamento ao gerar PDF
+  const handlePdfGenerated = async () => {
+    if (!id || !quote) return
+    try {
+      if (!quote.pdf_locked) {
+        const updated = await updateQuote(id, {
+          pdf_locked: true,
+          numero_referencia: numeroReferencia.trim() || quote.numero_referencia,
+          inclui_editorial: incluiEditorial,
+          tiragem_valorizacao: tiragemValorizacao,
+        })
+        setQuote(updated)
+        setPdfLocked(true)
+        toast({
+          title: 'Orçamento congelado',
+          description:
+            'O orçamento foi travado contra alterações após a geração do documento oficial.',
+        })
+      }
+    } catch (err) {
+      console.error('Erro ao congelar orçamento:', err)
+    }
+  }
+
+  // Destravar orçamento
+  const handleUnlockQuote = async () => {
+    if (!id || !quote) return
+    try {
+      const updated = await updateQuote(id, { pdf_locked: false })
+      setQuote(updated)
+      setPdfLocked(false)
+      setUnlockConfirmOpen(false)
+      toast({
+        title: 'Orçamento liberado para edição',
+        description: 'Os campos foram destravados.',
+      })
+    } catch {
+      toast({
+        title: 'Erro ao destravar orçamento',
+        variant: 'destructive',
+      })
+    }
+  }
+
   // Salvar Desconto
   const handleSaveDiscount = async () => {
     if (!id || !quote) return
+    if (pdfLocked) {
+      toast({
+        title: 'Orçamento congelado',
+        description: 'Destrave o orçamento para alterar o desconto.',
+        variant: 'destructive',
+      })
+      return
+    }
     setIsUpdatingDiscount(true)
     try {
       await updateQuote(id, { desconto_percentual: descontoPercentual })
@@ -230,6 +314,14 @@ export default function QuoteDetail() {
   // Salvar Produção Gráfica e Condições Gerais
   const handleSaveGraficaECondicoes = async () => {
     if (!id) return
+    if (pdfLocked) {
+      toast({
+        title: 'Orçamento congelado',
+        description: 'Destrave o orçamento para editar especificações e tiragens.',
+        variant: 'destructive',
+      })
+      return
+    }
     setIsSavingGrafica(true)
     try {
       await updateQuote(id, {
@@ -304,7 +396,7 @@ export default function QuoteDetail() {
   // Adicionar Item Editorial
   const handleAddItem = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!id || !newDescricao.trim()) return
+    if (!id || !newDescricao.trim() || pdfLocked) return
 
     setIsAddingItem(true)
     try {
@@ -341,6 +433,14 @@ export default function QuoteDetail() {
 
   // Excluir Item
   const handleDeleteItem = async (itemId: string) => {
+    if (pdfLocked) {
+      toast({
+        title: 'Orçamento congelado',
+        description: 'Destrave o orçamento para remover itens.',
+        variant: 'destructive',
+      })
+      return
+    }
     try {
       await deleteQuoteItem(itemId)
       setItems(items.filter((it) => it.id !== itemId))
@@ -387,7 +487,7 @@ export default function QuoteDetail() {
 
   const companyNome = companySettings?.nome_comercial || 'Editora Oeste'
   const waMsg = quote
-    ? `Olá ${clienteNome}! Segue anexa a nossa proposta comercial da ${companyNome} referente a "${quote.titulo}" (Ref. ${quote.codigo || 'ORC'}). Fico à disposição para esclarecer qualquer ponto!`
+    ? `Olá ${clienteNome}! Segue anexa a nossa proposta comercial da ${companyNome} referente a "${quote.titulo}"${numeroReferencia ? ` (Ref. ${numeroReferencia})` : ''}. Fico à disposição para esclarecer qualquer ponto!`
     : ''
   const waUrl = telefone ? formatWhatsAppUrl(telefone, waMsg) : ''
 
@@ -441,13 +541,55 @@ export default function QuoteDetail() {
         </div>
       )}
 
+      {/* Banner de Orçamento Congelado após PDF */}
+      {pdfLocked && (
+        <div className="p-3.5 rounded-lg border border-[#D5CDC4] bg-[#FAF8F5] flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs sm:text-sm">
+          <div className="flex items-center gap-2.5">
+            <Lock className="w-4 h-4 text-[#8A8178] flex-shrink-0" />
+            <div>
+              <span className="font-semibold text-[#1E1B16]">Orçamento congelado:</span>{' '}
+              <span className="text-[#4A4238]">
+                O documento oficial em PDF já foi gerado. Os campos estão em modo somente leitura
+                para preservar a versão enviada ao cliente.
+              </span>
+            </div>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setUnlockConfirmOpen(true)}
+            className="border-[#B3541E] text-[#B3541E] hover:bg-[#FAF3EC] text-xs h-8 whitespace-nowrap self-start sm:self-auto"
+          >
+            <Unlock className="w-3.5 h-3.5 mr-1.5" />
+            Editar orçamento
+          </Button>
+        </div>
+      )}
+
       {/* Cabeçalho da Proposta */}
       <div className="bg-white p-5 rounded-lg border border-[#E5DFD6] shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2 flex-wrap mb-1">
-            <span className="font-mono text-xs px-2 py-0.5 rounded bg-[#FAF8F5] text-[#B3541E] border border-[#E5DFD6] font-bold">
-              {quote.codigo || 'ORC-TEMP'}
-            </span>
+            {numeroReferencia ? (
+              <span className="font-mono text-xs px-2 py-0.5 rounded bg-[#FAF8F5] text-[#1E1B16] border border-[#E5DFD6] font-bold">
+                REF: {numeroReferencia}
+              </span>
+            ) : quote.codigo ? (
+              <span className="font-mono text-xs px-2 py-0.5 rounded bg-[#FAF8F5] text-[#8A8178] border border-[#E5DFD6]">
+                {quote.codigo}
+              </span>
+            ) : null}
+
+            {pdfLocked && (
+              <Badge
+                variant="outline"
+                className="border-amber-300 bg-amber-50 text-amber-800 text-[11px] flex items-center gap-1"
+              >
+                <Lock className="w-3 h-3" />
+                Congelado após PDF
+              </Badge>
+            )}
+
             <span className="text-xs text-[#8A8178]">
               Cliente: <strong className="text-[#1E1B16]">{clienteNome}</strong>
             </span>
@@ -556,278 +698,323 @@ export default function QuoteDetail() {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Coluna Esquerda: Itens Editoriais + Produção Gráfica (8 cols) */}
         <div className="lg:col-span-8 space-y-6">
-          {/* Card: Parte 1 — Produção Editorial */}
+          {/* Card: Parte 1 — Produção Editorial (com Interruptor opcional) */}
           <Card className="bg-white border-[#E5DFD6] shadow-sm">
-            <CardHeader className="p-4 border-b border-[#E5DFD6] flex flex-row items-center justify-between">
+            <CardHeader className="p-4 border-b border-[#E5DFD6] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
                 <CardTitle className="font-serif text-base font-bold text-[#1E1B16] flex items-center gap-2">
-                  <span className="bg-[#B3541E] text-white text-[10px] px-1.5 py-0.5 rounded font-mono">
+                  <span className="bg-[#1E1B16] text-white text-[10px] px-1.5 py-0.5 rounded font-mono">
                     PARTE 1
                   </span>
                   <span>Produção Editorial</span>
                 </CardTitle>
                 <p className="text-xs text-[#8A8178] mt-0.5">
-                  ISBN, Capa, Diagramação InDesign, Revisão e Kindle (autocomplete busca no catálogo
-                  e no histórico)
+                  ISBN, Capa, Diagramação InDesign, Revisão e Kindle
                 </p>
+              </div>
+
+              {/* Interruptor: Projeto inclui produção editorial? */}
+              <div className="flex items-center gap-2.5 bg-[#FAF8F5] px-3 py-1.5 rounded-md border border-[#E5DFD6]">
+                <label
+                  htmlFor="toggle-editorial"
+                  className="text-xs font-semibold text-[#1E1B16] cursor-pointer"
+                >
+                  Inclui produção editorial?
+                </label>
+                <Switch
+                  id="toggle-editorial"
+                  checked={incluiEditorial}
+                  disabled={pdfLocked}
+                  onCheckedChange={async (checked) => {
+                    setIncluiEditorial(checked)
+                    if (id && quote) {
+                      try {
+                        await updateQuote(id, { inclui_editorial: checked })
+                        setQuote({ ...quote, inclui_editorial: checked })
+                      } catch {
+                        /* silently caught */
+                      }
+                    }
+                  }}
+                />
               </div>
             </CardHeader>
 
             <CardContent className="p-4 space-y-4">
-              {/* Tabela de Itens */}
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs sm:text-sm">
-                  <thead className="bg-[#FAF8F5] border-b border-[#E5DFD6] text-[#8A8178] font-semibold text-[11px] uppercase">
-                    <tr>
-                      <th className="py-2.5 px-3">Item / Serviço Editorial</th>
-                      <th className="py-2.5 px-3 text-center w-16">Qtd</th>
-                      <th className="py-2.5 px-3 text-right w-28">Valor Unit.</th>
-                      <th className="py-2.5 px-3 text-right w-28">Subtotal</th>
-                      <th className="py-2.5 px-2 text-center w-10"></th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[#E5DFD6]">
-                    {items.length === 0 ? (
-                      <tr>
-                        <td colSpan={5} className="py-8 text-center text-xs text-[#8A8178]">
-                          Nenhum item editorial inserido. Adicione no formulário abaixo.
-                        </td>
-                      </tr>
-                    ) : (
-                      items.map((it, idx) => (
-                        <tr key={it.id} className="hover:bg-[#FAF8F5]">
-                          <td className="py-3 px-3 font-medium text-[#1E1B16]">
-                            <span className="text-[#8A8178] mr-1.5 font-mono text-xs">
-                              {idx + 1}.
-                            </span>
-                            {it.descricao}
-                          </td>
-                          <td className="py-3 px-3 text-center text-[#4A4238]">{it.quantidade}</td>
-                          <td className="py-3 px-3 text-right font-mono text-[#1E1B16]">
-                            {(it.valor_unitario || 0).toLocaleString('pt-BR', {
-                              style: 'currency',
-                              currency: 'BRL',
-                            })}
-                          </td>
-                          <td className="py-3 px-3 text-right font-mono font-bold text-[#B3541E]">
-                            {((it.quantidade || 0) * (it.valor_unitario || 0)).toLocaleString(
-                              'pt-BR',
-                              {
-                                style: 'currency',
-                                currency: 'BRL',
-                              },
-                            )}
-                          </td>
-                          <td className="py-3 px-2 text-center">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => handleDeleteItem(it.id)}
-                              className="h-7 w-7 text-[#8A8178] hover:text-[#B3261E]"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </Button>
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Formulário Inline para Adicionar Novo Item Editorial com Autocomplete */}
-              <form
-                onSubmit={handleAddItem}
-                className="bg-[#FAF8F5] p-3 rounded-md border border-[#E5DFD6] space-y-2"
-              >
-                <div className="flex items-center justify-between text-xs font-semibold text-[#1E1B16]">
-                  <span className="flex items-center gap-1">
-                    <Plus className="w-3.5 h-3.5 text-[#B3541E]" />
-                    Adicionar Serviço Editorial
-                  </span>
-                  <span className="text-[11px] text-[#8A8178] font-normal">
-                    Sugestões aparecem ao digitar
-                  </span>
+              {!incluiEditorial ? (
+                <div className="py-6 px-4 bg-[#FAF8F5] rounded-md border border-dashed border-[#D5CDC4] text-center space-y-1">
+                  <div className="text-xs font-semibold text-[#1E1B16]">
+                    Parte 1 desativada para este projeto
+                  </div>
+                  <p className="text-xs text-[#8A8178] max-w-md mx-auto">
+                    A Parte 1 não será exibida no PDF da proposta (a proposta começará direto na
+                    Parte 2 — Produção Gráfica) e não somará valores editoriais no dashboard.
+                  </p>
                 </div>
-
-                <div className="relative">
-                  <div className="flex flex-col sm:flex-row gap-2">
-                    <div className="relative flex-1">
-                      <Input
-                        value={newDescricao}
-                        onChange={(e) => handleDescricaoChange(e.target.value)}
-                        onFocus={() => {
-                          if (newDescricao.trim()) setShowSugestoes(true)
-                        }}
-                        placeholder="Nome do serviço (ex: ISBN, Revisão textual, Diagramação...)"
-                        className="text-xs h-9 bg-white border-[#E5DFD6]"
-                      />
-
-                      {/* Dropdown de Autocomplete com Memória */}
-                      {showSugestoes && sugestoesCache.length > 0 && (
-                        <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-[#E5DFD6] rounded-md shadow-lg z-30 max-h-52 overflow-y-auto divide-y divide-[#FAF8F5]">
-                          <div className="p-1.5 bg-[#FAF8F5] text-[10px] font-bold uppercase text-[#8A8178] flex items-center justify-between">
-                            <span className="flex items-center gap-1">
-                              <Sparkles className="w-3 h-3 text-[#B3541E]" />
-                              Sugestões da memória do catálogo:
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => setShowSugestoes(false)}
-                              className="text-gray-400 hover:text-gray-600"
-                            >
-                              ✕
-                            </button>
-                          </div>
-                          {sugestoesCache.map((sug) => (
-                            <div
-                              key={sug.id}
-                              onMouseDown={(e) => {
-                                e.preventDefault()
-                                handleSelectSugestao(sug)
-                              }}
-                              className="p-2 hover:bg-[#FAF8F5] cursor-pointer text-xs flex items-center justify-between gap-2"
-                            >
-                              <div className="min-w-0 flex-1">
-                                <div className="font-semibold text-[#1E1B16] line-clamp-1">
-                                  {sug.nome}
-                                </div>
-                                {sug.descricao && (
-                                  <div className="text-[11px] text-[#8A8178] line-clamp-1">
-                                    {sug.descricao}
-                                  </div>
+              ) : (
+                <>
+                  {/* Tabela de Itens */}
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs sm:text-sm">
+                      <thead className="bg-[#FAF8F5] border-b border-[#E5DFD6] text-[#8A8178] font-semibold text-[11px] uppercase">
+                        <tr>
+                          <th className="py-2.5 px-3">Item / Serviço Editorial</th>
+                          <th className="py-2.5 px-3 text-center w-16">Qtd</th>
+                          <th className="py-2.5 px-3 text-right w-28">Valor Unit.</th>
+                          <th className="py-2.5 px-3 text-right w-28">Subtotal</th>
+                          <th className="py-2.5 px-2 text-center w-10"></th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[#E5DFD6]">
+                        {items.length === 0 ? (
+                          <tr>
+                            <td colSpan={5} className="py-8 text-center text-xs text-[#8A8178]">
+                              Nenhum item editorial inserido. Adicione no formulário abaixo.
+                            </td>
+                          </tr>
+                        ) : (
+                          items.map((it, idx) => (
+                            <tr key={it.id} className="hover:bg-[#FAF8F5]">
+                              <td className="py-3 px-3 font-medium text-[#1E1B16]">
+                                <span className="text-[#8A8178] mr-1.5 font-mono text-xs">
+                                  {idx + 1}.
+                                </span>
+                                {it.descricao}
+                              </td>
+                              <td className="py-3 px-3 text-center text-[#4A4238]">
+                                {it.quantidade}
+                              </td>
+                              <td className="py-3 px-3 text-right font-mono text-[#1E1B16]">
+                                {(it.valor_unitario || 0).toLocaleString('pt-BR', {
+                                  style: 'currency',
+                                  currency: 'BRL',
+                                })}
+                              </td>
+                              <td className="py-3 px-3 text-right font-mono font-bold text-[#1E1B16]">
+                                {((it.quantidade || 0) * (it.valor_unitario || 0)).toLocaleString(
+                                  'pt-BR',
+                                  {
+                                    style: 'currency',
+                                    currency: 'BRL',
+                                  },
                                 )}
+                              </td>
+                              <td className="py-3 px-2 text-center">
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  disabled={pdfLocked}
+                                  onClick={() => handleDeleteItem(it.id)}
+                                  className="h-7 w-7 text-[#8A8178] hover:text-[#B3261E]"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </Button>
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Formulário Inline para Adicionar Novo Item Editorial */}
+                  {!pdfLocked && (
+                    <form
+                      onSubmit={handleAddItem}
+                      className="bg-[#FAF8F5] p-3 rounded-md border border-[#E5DFD6] space-y-2"
+                    >
+                      <div className="flex items-center justify-between text-xs font-semibold text-[#1E1B16]">
+                        <span className="flex items-center gap-1">
+                          <Plus className="w-3.5 h-3.5 text-[#B3541E]" />
+                          Adicionar Serviço Editorial
+                        </span>
+                        <span className="text-[11px] text-[#8A8178] font-normal">
+                          Sugestões aparecem ao digitar
+                        </span>
+                      </div>
+
+                      <div className="relative">
+                        <div className="flex flex-col sm:flex-row gap-2">
+                          <div className="relative flex-1">
+                            <Input
+                              value={newDescricao}
+                              onChange={(e) => handleDescricaoChange(e.target.value)}
+                              onFocus={() => {
+                                if (newDescricao.trim()) setShowSugestoes(true)
+                              }}
+                              placeholder="Nome do serviço (ex: ISBN, Revisão textual, Diagramação...)"
+                              className="text-xs h-9 bg-white border-[#E5DFD6]"
+                            />
+
+                            {/* Dropdown de Autocomplete com Memória */}
+                            {showSugestoes && sugestoesCache.length > 0 && (
+                              <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-[#E5DFD6] rounded-md shadow-lg z-30 max-h-52 overflow-y-auto divide-y divide-[#FAF8F5]">
+                                <div className="p-1.5 bg-[#FAF8F5] text-[10px] font-bold uppercase text-[#8A8178] flex items-center justify-between">
+                                  <span className="flex items-center gap-1">
+                                    <Sparkles className="w-3 h-3 text-[#B3541E]" />
+                                    Sugestões da memória do catálogo:
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => setShowSugestoes(false)}
+                                    className="text-gray-400 hover:text-gray-600"
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
+                                {sugestoesCache.map((sug) => (
+                                  <div
+                                    key={sug.id}
+                                    onMouseDown={(e) => {
+                                      e.preventDefault()
+                                      handleSelectSugestao(sug)
+                                    }}
+                                    className="p-2 hover:bg-[#FAF8F5] cursor-pointer text-xs flex items-center justify-between gap-2"
+                                  >
+                                    <div className="min-w-0 flex-1">
+                                      <div className="font-semibold text-[#1E1B16] line-clamp-1">
+                                        {sug.nome}
+                                      </div>
+                                      {sug.descricao && (
+                                        <div className="text-[11px] text-[#8A8178] line-clamp-1">
+                                          {sug.descricao}
+                                        </div>
+                                      )}
+                                    </div>
+                                    <div className="text-right font-mono font-bold text-xs text-[#1E1B16] flex-shrink-0">
+                                      {sug.valor_unitario > 0
+                                        ? sug.valor_unitario.toLocaleString('pt-BR', {
+                                            style: 'currency',
+                                            currency: 'BRL',
+                                          })
+                                        : 'A combinar'}
+                                    </div>
+                                  </div>
+                                ))}
                               </div>
-                              <div className="text-right font-mono font-bold text-xs text-[#B3541E] flex-shrink-0">
-                                {sug.valor_unitario > 0
-                                  ? sug.valor_unitario.toLocaleString('pt-BR', {
-                                      style: 'currency',
-                                      currency: 'BRL',
-                                    })
-                                  : 'A combinar'}
-                              </div>
-                            </div>
-                          ))}
+                            )}
+                          </div>
+
+                          <div className="w-full sm:w-20">
+                            <Input
+                              type="number"
+                              min="1"
+                              value={newQuantidade}
+                              onChange={(e) =>
+                                setNewQuantidade(Math.max(1, parseInt(e.target.value) || 1))
+                              }
+                              placeholder="Qtd"
+                              className="text-xs h-9 bg-white text-center border-[#E5DFD6]"
+                            />
+                          </div>
+
+                          <div className="w-full sm:w-28">
+                            <Input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              value={newValorUnitario}
+                              onChange={(e) => setNewValorUnitario(parseFloat(e.target.value) || 0)}
+                              placeholder="R$ Unit."
+                              className="text-xs h-9 bg-white text-right border-[#E5DFD6]"
+                            />
+                          </div>
+
+                          <Button
+                            type="submit"
+                            disabled={isAddingItem || !newDescricao.trim()}
+                            className="bg-[#B3541E] hover:bg-[#9A4618] text-white text-xs h-9 px-4"
+                          >
+                            Adicionar
+                          </Button>
+                        </div>
+                      </div>
+                    </form>
+                  )}
+
+                  {/* Box de Subtotais da Parte 1 */}
+                  <div className="bg-[#FAF8F5] p-3 rounded-md border border-[#E5DFD6] flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 text-xs">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[#8A8178]">Desconto Comercial (%):</span>
+                      <Input
+                        type="number"
+                        min="0"
+                        max="100"
+                        disabled={pdfLocked}
+                        value={descontoPercentual}
+                        onChange={(e) =>
+                          setDescontoPercentual(
+                            Math.min(100, Math.max(0, parseFloat(e.target.value) || 0)),
+                          )
+                        }
+                        className="w-16 h-7 text-xs border-[#E5DFD6] bg-white font-mono"
+                      />
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={isUpdatingDiscount || pdfLocked}
+                        onClick={handleSaveDiscount}
+                        className="h-7 text-xs border-[#E5DFD6] text-[#4A4238] hover:bg-white"
+                      >
+                        {isUpdatingDiscount ? 'Aplicando...' : 'Aplicar'}
+                      </Button>
+                    </div>
+
+                    <div className="text-right space-y-0.5">
+                      <div className="text-[#8A8178]">
+                        Subtotal Bruto:{' '}
+                        <strong>
+                          {subtotal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                        </strong>
+                      </div>
+                      {valorDesconto > 0 && (
+                        <div className="text-[#B3261E]">
+                          Desconto ({descontoPercentual}%): -
+                          {valorDesconto.toLocaleString('pt-BR', {
+                            style: 'currency',
+                            currency: 'BRL',
+                          })}
                         </div>
                       )}
+                      <div className="text-sm font-bold text-[#1E1B16] font-serif">
+                        Total Editorial Líquido:{' '}
+                        <span className="font-mono">
+                          {totalEditorialLiquido.toLocaleString('pt-BR', {
+                            style: 'currency',
+                            currency: 'BRL',
+                          })}
+                        </span>
+                      </div>
                     </div>
-
-                    <div className="w-full sm:w-20">
-                      <Input
-                        type="number"
-                        min="1"
-                        value={newQuantidade}
-                        onChange={(e) =>
-                          setNewQuantidade(Math.max(1, parseInt(e.target.value) || 1))
-                        }
-                        placeholder="Qtd"
-                        className="text-xs h-9 bg-white text-center border-[#E5DFD6]"
-                      />
-                    </div>
-
-                    <div className="w-full sm:w-28">
-                      <Input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        value={newValorUnitario}
-                        onChange={(e) => setNewValorUnitario(parseFloat(e.target.value) || 0)}
-                        placeholder="R$ Unit."
-                        className="text-xs h-9 bg-white text-right border-[#E5DFD6]"
-                      />
-                    </div>
-
-                    <Button
-                      type="submit"
-                      disabled={isAddingItem || !newDescricao.trim()}
-                      className="bg-[#B3541E] hover:bg-[#9A4618] text-white text-xs h-9 px-4"
-                    >
-                      Adicionar
-                    </Button>
                   </div>
-                </div>
-              </form>
-
-              {/* Box de Subtotais da Parte 1 */}
-              <div className="bg-[#FAF8F5] p-3 rounded-md border border-[#E5DFD6] flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 text-xs">
-                <div className="flex items-center gap-2">
-                  <span className="text-[#8A8178]">Desconto Comercial (%):</span>
-                  <Input
-                    type="number"
-                    min="0"
-                    max="100"
-                    value={descontoPercentual}
-                    onChange={(e) =>
-                      setDescontoPercentual(
-                        Math.min(100, Math.max(0, parseFloat(e.target.value) || 0)),
-                      )
-                    }
-                    className="w-16 h-7 text-xs border-[#E5DFD6] bg-white font-mono"
-                  />
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleSaveDiscount}
-                    disabled={isUpdatingDiscount}
-                    className="h-7 text-xs border-[#E5DFD6] text-[#4A4238] hover:bg-white"
-                  >
-                    {isUpdatingDiscount ? 'Aplicando...' : 'Aplicar'}
-                  </Button>
-                </div>
-
-                <div className="text-right space-y-0.5">
-                  <div className="text-[#8A8178]">
-                    Subtotal Bruto:{' '}
-                    <strong>
-                      {subtotal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                    </strong>
-                  </div>
-                  {valorDesconto > 0 && (
-                    <div className="text-[#B3261E]">
-                      Desconto ({descontoPercentual}%): -
-                      {valorDesconto.toLocaleString('pt-BR', {
-                        style: 'currency',
-                        currency: 'BRL',
-                      })}
-                    </div>
-                  )}
-                  <div className="text-sm font-bold text-[#B3541E] font-serif">
-                    Total Editorial Líquido:{' '}
-                    <span className="font-mono">
-                      {totalEditorialLiquido.toLocaleString('pt-BR', {
-                        style: 'currency',
-                        currency: 'BRL',
-                      })}
-                    </span>
-                  </div>
-                </div>
-              </div>
+                </>
+              )}
             </CardContent>
           </Card>
-
           {/* Card: Parte 2 — Produção Gráfica (Impressão do Livro) */}
           <Card className="bg-white border-[#E5DFD6] shadow-sm">
             <CardHeader className="p-4 border-b border-[#E5DFD6] flex flex-row items-center justify-between">
               <div>
                 <CardTitle className="font-serif text-base font-bold text-[#1E1B16] flex items-center gap-2">
-                  <span className="bg-[#B3541E] text-white text-[10px] px-1.5 py-0.5 rounded font-mono">
+                  <span className="bg-[#1E1B16] text-white text-[10px] px-1.5 py-0.5 rounded font-mono">
                     PARTE 2
                   </span>
                   <span>Produção Gráfica (Impressão do Livro)</span>
                 </CardTitle>
                 <p className="text-xs text-[#8A8178] mt-0.5">
-                  Especificações técnicas livres e tabela de impressão por tiragem flexível (
-                  {companyNome})
+                  Especificações técnicas e faixas de tiragem (1, 50 e 100 exemplares)
                 </p>
               </div>
-              <Button
-                size="sm"
-                onClick={handleSaveGraficaECondicoes}
-                disabled={isSavingGrafica}
-                className="bg-[#B3541E] hover:bg-[#9A4618] text-white text-xs h-8"
-              >
-                {isSavingGrafica ? 'Salvando...' : 'Salvar Produção Gráfica'}
-              </Button>
+              {!pdfLocked && (
+                <Button
+                  size="sm"
+                  onClick={handleSaveGraficaECondicoes}
+                  disabled={isSavingGrafica}
+                  className="bg-[#B3541E] hover:bg-[#9A4618] text-white text-xs h-8"
+                >
+                  {isSavingGrafica ? 'Salvando...' : 'Salvar Produção Gráfica'}
+                </Button>
+              )}
             </CardHeader>
 
             <CardContent className="p-4 space-y-4">
@@ -837,9 +1024,13 @@ export default function QuoteDetail() {
                 </label>
                 <textarea
                   value={especificacoesGrafica}
+                  disabled={pdfLocked}
                   onChange={(e) => setEspecificacoesGrafica(e.target.value)}
                   rows={4}
-                  className="w-full p-2.5 text-xs border border-[#E5DFD6] rounded bg-[#FAF8F5] text-[#1E1B16] focus:outline-none focus:ring-1 focus:ring-[#B3541E] font-sans leading-relaxed"
+                  className={cn(
+                    'w-full p-2.5 text-xs border border-[#E5DFD6] rounded bg-[#FAF8F5] text-[#1E1B16] focus:outline-none focus:ring-1 focus:ring-[#B3541E] font-sans leading-relaxed',
+                    pdfLocked && 'opacity-75 cursor-not-allowed bg-slate-50',
+                  )}
                   placeholder="Ex: Livro até 72 páginas, formato 155x225mm fechado, miolo P&B..."
                 />
               </div>
@@ -848,18 +1039,20 @@ export default function QuoteDetail() {
               <div className="space-y-2 pt-1">
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-bold uppercase tracking-wider text-[#1E1B16]">
-                    Tabela de Impressão por Tiragem (Flexível)
+                    Tabela de Impressão por Tiragem
                   </span>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={handleAddTiragemRow}
-                    className="h-7 text-xs border-[#E5DFD6] text-[#B3541E] hover:bg-[#FAF8F5]"
-                  >
-                    <Plus className="w-3.5 h-3.5 mr-1" />
-                    Adicionar Linha de Tiragem
-                  </Button>
+                  {!pdfLocked && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={handleAddTiragemRow}
+                      className="h-7 text-xs border-[#E5DFD6] text-[#B3541E] hover:bg-[#FAF8F5]"
+                    >
+                      <Plus className="w-3.5 h-3.5 mr-1" />
+                      Adicionar Linha de Tiragem
+                    </Button>
+                  )}
                 </div>
 
                 <div className="space-y-1.5">
@@ -872,6 +1065,7 @@ export default function QuoteDetail() {
                         <Input
                           type="number"
                           min="1"
+                          disabled={pdfLocked}
                           placeholder="Tiragem"
                           value={row.tiragem}
                           onChange={(e) =>
@@ -887,6 +1081,7 @@ export default function QuoteDetail() {
                       <div className="flex-1">
                         <Input
                           placeholder="Descrição (ex: 50 exemplares)"
+                          disabled={pdfLocked}
                           value={row.descricao}
                           onChange={(e) => handleUpdateTiragemRow(idx, 'descricao', e.target.value)}
                           className="text-xs h-8 bg-white border-[#E5DFD6]"
@@ -897,6 +1092,7 @@ export default function QuoteDetail() {
                           type="number"
                           step="0.01"
                           min="0"
+                          disabled={pdfLocked}
                           placeholder="Preço/un"
                           value={row.valor_unitario}
                           onChange={(e) =>
@@ -914,15 +1110,17 @@ export default function QuoteDetail() {
                           (Number(row.tiragem) || 0) * (Number(row.valor_unitario) || 0)
                         ).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                       </div>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => handleRemoveTiragemRow(idx)}
-                        className="h-7 w-7 text-[#8A8178] hover:text-[#B3261E]"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </Button>
+                      {!pdfLocked && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleRemoveTiragemRow(idx)}
+                          className="h-7 w-7 text-[#8A8178] hover:text-[#B3261E]"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -936,9 +1134,13 @@ export default function QuoteDetail() {
                 </label>
                 <textarea
                   value={condicoesGerais}
+                  disabled={pdfLocked}
                   onChange={(e) => setCondicoesGerais(e.target.value)}
                   rows={4}
-                  className="w-full p-2.5 text-xs border border-[#E5DFD6] rounded bg-white text-[#4A4238] focus:outline-none focus:ring-1 focus:ring-[#B3541E] font-sans leading-relaxed"
+                  className={cn(
+                    'w-full p-2.5 text-xs border border-[#E5DFD6] rounded bg-white text-[#4A4238] focus:outline-none focus:ring-1 focus:ring-[#B3541E] font-sans leading-relaxed',
+                    pdfLocked && 'opacity-75 cursor-not-allowed bg-slate-50',
+                  )}
                   placeholder="Condições contratuais..."
                 />
               </div>
@@ -950,21 +1152,84 @@ export default function QuoteDetail() {
         <div className="lg:col-span-4 space-y-4">
           {/* Dados do Orçamento */}
           <Card className="bg-white border-[#E5DFD6] shadow-sm">
-            <CardHeader className="p-4 border-b border-[#E5DFD6]">
+            <CardHeader className="p-4 border-b border-[#E5DFD6] flex flex-row items-center justify-between">
               <CardTitle className="font-serif text-sm font-bold text-[#1E1B16]">
                 Dados do Orçamento
               </CardTitle>
+              {pdfLocked && (
+                <span className="text-[10px] font-semibold text-amber-800 flex items-center gap-1 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                  <Lock className="w-3 h-3" /> Travado
+                </span>
+              )}
             </CardHeader>
             <CardContent className="p-4 space-y-3.5 text-xs">
+              {/* Campo livre: Número da Proposta + hint discreto do último usado */}
+              <div>
+                <label className="font-semibold uppercase tracking-wider text-[#1E1B16] text-[10px] block">
+                  Referência / Nº da Proposta
+                </label>
+                <Input
+                  value={numeroReferencia}
+                  disabled={pdfLocked}
+                  onChange={(e) => setNumeroReferencia(e.target.value)}
+                  placeholder="Ex: 26152"
+                  className={cn(
+                    'mt-1 text-xs border-[#E5DFD6] bg-[#FAF8F5] font-mono',
+                    pdfLocked && 'cursor-not-allowed opacity-75',
+                  )}
+                />
+                {ultimoNumeroUsado && (
+                  <p className="text-[11px] text-[#8A8178] mt-1">
+                    Lembrete da sequência: último número usado foi{' '}
+                    <strong className="font-mono text-[#1E1B16]">{ultimoNumeroUsado}</strong>.
+                  </p>
+                )}
+              </div>
+
               <div>
                 <label className="font-semibold uppercase tracking-wider text-[#8A8178] text-[10px]">
                   Título do Projeto
                 </label>
                 <Input
                   value={titulo}
+                  disabled={pdfLocked}
                   onChange={(e) => setTitulo(e.target.value)}
-                  className="mt-1 text-xs border-[#E5DFD6] bg-[#FAF8F5]"
+                  className={cn(
+                    'mt-1 text-xs border-[#E5DFD6] bg-[#FAF8F5]',
+                    pdfLocked && 'cursor-not-allowed opacity-75',
+                  )}
                 />
+              </div>
+
+              {/* Novo Campo: Tiragem para valorização no dashboard */}
+              <div>
+                <label className="font-semibold uppercase tracking-wider text-[#1E1B16] text-[10px] block">
+                  Tiragem para valorização (Dashboard)
+                </label>
+                <Select
+                  value={tiragemValorizacao}
+                  disabled={pdfLocked}
+                  onValueChange={setTiragemValorizacao}
+                >
+                  <SelectTrigger
+                    className={cn(
+                      'mt-1 text-xs border-[#E5DFD6] bg-[#FAF8F5] h-9',
+                      pdfLocked && 'cursor-not-allowed opacity-75',
+                    )}
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="1">1 exemplar (prova / piloto)</SelectItem>
+                    <SelectItem value="50">50 exemplares</SelectItem>
+                    <SelectItem value="100">100 exemplares</SelectItem>
+                    <SelectItem value="combinar">A combinar (sem valor monetário)</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-[10px] text-[#8A8178] mt-1">
+                  Define qual lote da gráfica compõe o valor exibido nas somas do dashboard. O PDF
+                  para o cliente continuará listando as 3 tiragens completas.
+                </p>
               </div>
 
               <div>
@@ -974,22 +1239,32 @@ export default function QuoteDetail() {
                 <Input
                   type="date"
                   value={dataEnvio}
+                  disabled={pdfLocked}
                   onChange={(e) => setDataEnvio(e.target.value)}
-                  className="mt-1 text-xs border-[#E5DFD6] bg-[#FAF8F5]"
+                  className={cn(
+                    'mt-1 text-xs border-[#E5DFD6] bg-[#FAF8F5]',
+                    pdfLocked && 'cursor-not-allowed opacity-75',
+                  )}
                 />
                 <p className="text-[10px] text-[#8A8178] mt-1">
                   Alimenta o cálculo de dias sem resposta e prioridades no painel.
                 </p>
               </div>
 
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleSaveHeader}
-                className="w-full text-xs border-[#E5DFD6] text-[#1E1B16] hover:bg-[#FAF8F5]"
-              >
-                Salvar Título / Data
-              </Button>
+              {!pdfLocked ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleSaveHeader}
+                  className="w-full text-xs border-[#E5DFD6] text-[#1E1B16] hover:bg-[#FAF8F5]"
+                >
+                  Salvar Informações
+                </Button>
+              ) : (
+                <div className="text-[11px] text-center text-[#8A8178] pt-1">
+                  Para editar estas informações, destrave o orçamento acima.
+                </div>
+              )}
             </CardContent>
           </Card>
 
@@ -1065,7 +1340,35 @@ export default function QuoteDetail() {
         condicoes={condicoesGerais}
         descontoPercentual={descontoPercentual}
         companySettings={companySettings}
+        incluiEditorial={incluiEditorial}
+        numeroReferencia={numeroReferencia}
+        onPdfGenerated={handlePdfGenerated}
       />
+
+      {/* Confirmação de Destravamento de Edição do Orçamento */}
+      <AlertDialog open={unlockConfirmOpen} onOpenChange={setUnlockConfirmOpen}>
+        <AlertDialogContent className="bg-white border-[#E5DFD6]">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="font-serif text-[#1E1B16]">
+              Destravar orçamento para edição?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-sm text-[#4A4238]">
+              A proposta em PDF deste orçamento já foi gerada e pode ter sido enviada ao cliente. Se
+              fizer alterações nos valores ou especificações, certifique-se de gerar e enviar um
+              novo documento atualizado.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="border-[#E5DFD6]">Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleUnlockQuote}
+              className="bg-[#B3541E] hover:bg-[#9A4618] text-white"
+            >
+              Sim, destravar edição
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Confirmação de Exclusão */}
       <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>

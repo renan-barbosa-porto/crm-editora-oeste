@@ -30,6 +30,9 @@ import {
 } from '@/lib/pdf-generator'
 import { useCompanySettings } from '@/contexts/SettingsContext'
 import { useToast } from '@/hooks/use-toast'
+import { getQuotes } from '@/services/quotes'
+import { getUltimoNumeroPropostaUsado } from '@/lib/quote-utils'
+import { Switch } from '@/components/ui/switch'
 import type { Lead, QuoteItem, QuoteStatus, GraficaTiragemRow } from '@/types/crm'
 import { Plus, Trash2, Sparkles, BookOpen } from 'lucide-react'
 
@@ -57,6 +60,10 @@ export function NewQuoteModal({
   const { settings: companySettings } = useCompanySettings()
   const [leads, setLeads] = useState<Lead[]>([])
   const [selectedLeadId, setSelectedLeadId] = useState<string>(initialLeadId || '')
+  const [numeroReferencia, setNumeroReferencia] = useState('')
+  const [ultimoNumeroUsado, setUltimoNumeroUsado] = useState<string | null>(null)
+  const [incluiEditorial, setIncluiEditorial] = useState(true)
+  const [tiragemValorizacao, setTiragemValorizacao] = useState<string>('50')
   const [titulo, setTitulo] = useState('')
   const [status, setStatus] = useState<QuoteStatus>('Rascunho')
   const [descontoPercentual, setDescontoPercentual] = useState<number>(0)
@@ -95,7 +102,15 @@ export function NewQuoteModal({
           }
         }
       })
-      // Começa vazio conforme solicitação: "não faça preenchimento automático, deixe aberto para preenchimento manual"
+      // Buscar orçamentos existentes para calcular último número usado (apenas lembrete!)
+      getQuotes().then((quotes) => {
+        const ultimo = getUltimoNumeroPropostaUsado(quotes)
+        setUltimoNumeroUsado(ultimo)
+      })
+      // Começa vazio sem preenchimento automático
+      setNumeroReferencia('')
+      setIncluiEditorial(true)
+      setTiragemValorizacao('50')
       setItems([])
       setErrors({})
       // Pré-carregar catálogo inicial para sugestões rápidas
@@ -204,6 +219,9 @@ export function NewQuoteModal({
       const quote = await createQuote(
         {
           titulo: titulo.trim(),
+          numero_referencia: numeroReferencia.trim() || undefined,
+          inclui_editorial: incluiEditorial,
+          tiragem_valorizacao: tiragemValorizacao,
           lead_id: selectedLeadId,
           contact_id: selectedLead?.contact_id || undefined,
           status,
@@ -352,184 +370,258 @@ export function NewQuoteModal({
             </div>
           </div>
 
-          {/* PARTE 1 — PRODUÇÃO EDITORIAL */}
+          {/* Número de Referência + Tiragem para Valorização */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 bg-[#FAF8F5] rounded-md border border-[#E5DFD6]">
+            <div>
+              <Label
+                htmlFor="quote-ref"
+                className="text-xs font-semibold uppercase tracking-wider text-[#1E1B16]"
+              >
+                Referência / Nº da Proposta
+              </Label>
+              <Input
+                id="quote-ref"
+                value={numeroReferencia}
+                onChange={(e) => setNumeroReferencia(e.target.value)}
+                placeholder="Ex: 26152"
+                className="mt-1 border-[#E5DFD6] bg-white font-mono"
+              />
+              {ultimoNumeroUsado && (
+                <p className="text-[11px] text-[#8A8178] mt-1">
+                  Lembrete da sequência: último número usado foi{' '}
+                  <strong className="font-mono text-[#1E1B16]">{ultimoNumeroUsado}</strong>.
+                </p>
+              )}
+            </div>
+
+            <div>
+              <Label className="text-xs font-semibold uppercase tracking-wider text-[#1E1B16]">
+                Tiragem para valorização (Dashboard)
+              </Label>
+              <Select value={tiragemValorizacao} onValueChange={setTiragemValorizacao}>
+                <SelectTrigger className="mt-1 border-[#E5DFD6] bg-white">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="1">1 exemplar (prova / piloto)</SelectItem>
+                  <SelectItem value="50">50 exemplares</SelectItem>
+                  <SelectItem value="100">100 exemplares</SelectItem>
+                  <SelectItem value="combinar">A combinar (sem valor monetário)</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-[10px] text-[#8A8178] mt-1">
+                Define qual lote gráfico compõe o valor no dashboard.
+              </p>
+            </div>
+          </div>
+
+          {/* PARTE 1 — PRODUÇÃO EDITORIAL (com interruptor) */}
           <div className="border border-[#E5DFD6] rounded-md p-3.5 bg-[#FAF8F5] space-y-3">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div>
                 <span className="text-xs font-bold uppercase tracking-wider text-[#1E1B16] flex items-center gap-1.5">
-                  <span className="bg-[#B3541E] text-white text-[10px] px-1.5 py-0.2 rounded font-mono">
+                  <span className="bg-[#1E1B16] text-white text-[10px] px-1.5 py-0.2 rounded font-mono">
                     PARTE 1
                   </span>
                   Produção Editorial
                 </span>
                 <p className="text-[11px] text-[#8A8178]">
-                  Começa vazio. Digite para buscar itens salvos na memória ou cadastre novos
-                  livremente.
+                  Digite para buscar itens do catálogo ou cadastre novos livremente.
                 </p>
               </div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={handleAddItem}
-                className="h-7 text-xs border-[#E5DFD6] hover:bg-white text-[#B3541E]"
-              >
-                <Plus className="w-3.5 h-3.5 mr-1" />
-                Adicionar Item Editorial
-              </Button>
-            </div>
 
-            {items.length === 0 ? (
-              <div className="p-4 text-center text-xs text-[#8A8178] border border-dashed border-[#E5DFD6] rounded bg-white">
-                Nenhum item adicionado ainda. Clique em "Adicionar Item Editorial" acima para
-                começar.
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {items.map((item, idx) => (
-                  <div
-                    key={idx}
-                    className="relative bg-white p-2.5 rounded border border-[#E5DFD6]"
-                  >
-                    <div className="flex items-center gap-2">
-                      <div className="relative flex-1">
-                        <Input
-                          placeholder="Digite o serviço editorial (ex: ISBN, Capa, Diagramação InDesign...)"
-                          value={item.descricao}
-                          onChange={(e) => handleUpdateItem(idx, 'descricao', e.target.value)}
-                          onFocus={() => setActiveSugestaoRow(idx)}
-                          className="text-xs sm:text-sm border-[#E5DFD6]"
-                        />
-
-                        {/* Dropdown de sugestões do catálogo com memória */}
-                        {activeSugestaoRow === idx && sugestoesCache.length > 0 && (
-                          <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-[#E5DFD6] rounded-md shadow-lg z-20 max-h-48 overflow-y-auto divide-y divide-[#FAF8F5]">
-                            <div className="p-1.5 bg-[#FAF8F5] text-[10px] font-bold uppercase text-[#8A8178] flex items-center justify-between">
-                              <span className="flex items-center gap-1">
-                                <Sparkles className="w-3 h-3 text-[#B3541E]" />
-                                Sugestões da memória do catálogo:
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => setActiveSugestaoRow(null)}
-                                className="text-gray-400 hover:text-gray-600"
-                              >
-                                ✕
-                              </button>
-                            </div>
-                            {sugestoesCache.map((sug) => (
-                              <div
-                                key={sug.id}
-                                onMouseDown={(e) => {
-                                  e.preventDefault()
-                                  handleSelectSugestao(idx, sug)
-                                }}
-                                className="p-2 hover:bg-[#FAF8F5] cursor-pointer text-xs flex items-center justify-between gap-2"
-                              >
-                                <div className="min-w-0 flex-1">
-                                  <div className="font-semibold text-[#1E1B16] line-clamp-1">
-                                    {sug.nome}
-                                  </div>
-                                  {sug.descricao && (
-                                    <div className="text-[11px] text-[#8A8178] line-clamp-1">
-                                      {sug.descricao}
-                                    </div>
-                                  )}
-                                </div>
-                                <div className="text-right flex-shrink-0 font-mono text-xs font-bold text-[#B3541E]">
-                                  {sug.valor_unitario > 0
-                                    ? sug.valor_unitario.toLocaleString('pt-BR', {
-                                        style: 'currency',
-                                        currency: 'BRL',
-                                      })
-                                    : 'A combinar'}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="w-16">
-                        <Input
-                          type="number"
-                          min="1"
-                          placeholder="Qtd"
-                          value={item.quantidade}
-                          onChange={(e) =>
-                            handleUpdateItem(
-                              idx,
-                              'quantidade',
-                              Math.max(1, parseInt(e.target.value) || 1),
-                            )
-                          }
-                          className="text-xs sm:text-sm text-center border-[#E5DFD6]"
-                        />
-                      </div>
-
-                      <div className="w-24">
-                        <Input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          placeholder="R$ Unit."
-                          value={item.valor_unitario}
-                          onChange={(e) =>
-                            handleUpdateItem(idx, 'valor_unitario', parseFloat(e.target.value) || 0)
-                          }
-                          className="text-xs sm:text-sm text-right border-[#E5DFD6]"
-                        />
-                      </div>
-
-                      <div className="w-24 text-right text-xs font-mono font-bold text-[#B3541E] pr-1">
-                        {(
-                          (Number(item.quantidade) || 0) * (Number(item.valor_unitario) || 0)
-                        ).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                      </div>
-
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => handleRemoveItem(idx)}
-                        className="h-8 w-8 text-[#8A8178] hover:text-[#B3261E]"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Subtotal Editorial */}
-            <div className="pt-2 border-t border-[#E5DFD6] flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
-              <div className="flex items-center gap-2">
-                <span className="text-[#8A8178]">Desconto Editorial (%):</span>
-                <Input
-                  type="number"
-                  min="0"
-                  max="100"
-                  value={descontoPercentual}
-                  onChange={(e) =>
-                    setDescontoPercentual(
-                      Math.min(100, Math.max(0, parseFloat(e.target.value) || 0)),
-                    )
-                  }
-                  className="w-16 h-7 text-xs border-[#E5DFD6] bg-white font-mono"
+              {/* Interruptor: Projeto inclui produção editorial? */}
+              <div className="flex items-center gap-2 bg-white px-2.5 py-1 rounded border border-[#E5DFD6] self-start sm:self-auto">
+                <label
+                  htmlFor="modal-toggle-editorial"
+                  className="text-xs font-medium text-[#1E1B16] cursor-pointer"
+                >
+                  Inclui editorial?
+                </label>
+                <Switch
+                  id="modal-toggle-editorial"
+                  checked={incluiEditorial}
+                  onCheckedChange={setIncluiEditorial}
                 />
               </div>
-
-              <div className="text-right">
-                <span className="text-[#8A8178]">Subtotal Editorial: </span>
-                <strong className="text-sm text-[#B3541E] font-mono">
-                  {valorTotalEditorial.toLocaleString('pt-BR', {
-                    style: 'currency',
-                    currency: 'BRL',
-                  })}
-                </strong>
-              </div>
             </div>
+
+            {!incluiEditorial ? (
+              <div className="p-4 text-center text-xs text-[#8A8178] border border-dashed border-[#E5DFD6] rounded bg-white">
+                Parte 1 desligada: a proposta começará direto na Parte 2 (Produção Gráfica).
+              </div>
+            ) : (
+              <>
+                <div className="flex justify-end">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleAddItem}
+                    className="h-7 text-xs border-[#E5DFD6] hover:bg-white text-[#B3541E]"
+                  >
+                    <Plus className="w-3.5 h-3.5 mr-1" />
+                    Adicionar Item Editorial
+                  </Button>
+                </div>
+
+                {items.length === 0 ? (
+                  <div className="p-4 text-center text-xs text-[#8A8178] border border-dashed border-[#E5DFD6] rounded bg-white">
+                    Nenhum item adicionado ainda. Clique em "Adicionar Item Editorial" acima para
+                    começar.
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {items.map((item, idx) => (
+                      <div
+                        key={idx}
+                        className="relative bg-white p-2.5 rounded border border-[#E5DFD6]"
+                      >
+                        <div className="flex items-center gap-2">
+                          <div className="relative flex-1">
+                            <Input
+                              placeholder="Digite o serviço editorial (ex: ISBN, Capa, Diagramação InDesign...)"
+                              value={item.descricao}
+                              onChange={(e) => handleUpdateItem(idx, 'descricao', e.target.value)}
+                              onFocus={() => setActiveSugestaoRow(idx)}
+                              className="text-xs sm:text-sm border-[#E5DFD6]"
+                            />
+
+                            {/* Dropdown de sugestões do catálogo com memória */}
+                            {activeSugestaoRow === idx && sugestoesCache.length > 0 && (
+                              <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-[#E5DFD6] rounded-md shadow-lg z-20 max-h-48 overflow-y-auto divide-y divide-[#FAF8F5]">
+                                <div className="p-1.5 bg-[#FAF8F5] text-[10px] font-bold uppercase text-[#8A8178] flex items-center justify-between">
+                                  <span className="flex items-center gap-1">
+                                    <Sparkles className="w-3 h-3 text-[#B3541E]" />
+                                    Sugestões da memória do catálogo:
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => setActiveSugestaoRow(null)}
+                                    className="text-gray-400 hover:text-gray-600"
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
+                                {sugestoesCache.map((sug) => (
+                                  <div
+                                    key={sug.id}
+                                    onMouseDown={(e) => {
+                                      e.preventDefault()
+                                      handleSelectSugestao(idx, sug)
+                                    }}
+                                    className="p-2 hover:bg-[#FAF8F5] cursor-pointer text-xs flex items-center justify-between gap-2"
+                                  >
+                                    <div className="min-w-0 flex-1">
+                                      <div className="font-semibold text-[#1E1B16] line-clamp-1">
+                                        {sug.nome}
+                                      </div>
+                                      {sug.descricao && (
+                                        <div className="text-[11px] text-[#8A8178] line-clamp-1">
+                                          {sug.descricao}
+                                        </div>
+                                      )}
+                                    </div>
+                                    <div className="text-right flex-shrink-0 font-mono text-xs font-bold text-[#1E1B16]">
+                                      {sug.valor_unitario > 0
+                                        ? sug.valor_unitario.toLocaleString('pt-BR', {
+                                            style: 'currency',
+                                            currency: 'BRL',
+                                          })
+                                        : 'A combinar'}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="w-16">
+                            <Input
+                              type="number"
+                              min="1"
+                              placeholder="Qtd"
+                              value={item.quantidade}
+                              onChange={(e) =>
+                                handleUpdateItem(
+                                  idx,
+                                  'quantidade',
+                                  Math.max(1, parseInt(e.target.value) || 1),
+                                )
+                              }
+                              className="text-xs sm:text-sm text-center border-[#E5DFD6]"
+                            />
+                          </div>
+
+                          <div className="w-24">
+                            <Input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              placeholder="R$ Unit."
+                              value={item.valor_unitario}
+                              onChange={(e) =>
+                                handleUpdateItem(
+                                  idx,
+                                  'valor_unitario',
+                                  parseFloat(e.target.value) || 0,
+                                )
+                              }
+                              className="text-xs sm:text-sm text-right border-[#E5DFD6]"
+                            />
+                          </div>
+
+                          <div className="w-24 text-right text-xs font-mono font-bold text-[#1E1B16] pr-1">
+                            {(
+                              (Number(item.quantidade) || 0) * (Number(item.valor_unitario) || 0)
+                            ).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                          </div>
+
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleRemoveItem(idx)}
+                            className="h-8 w-8 text-[#8A8178] hover:text-[#B3261E]"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Subtotal Editorial */}
+                <div className="pt-2 border-t border-[#E5DFD6] flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[#8A8178]">Desconto Editorial (%):</span>
+                    <Input
+                      type="number"
+                      min="0"
+                      max="100"
+                      value={descontoPercentual}
+                      onChange={(e) =>
+                        setDescontoPercentual(
+                          Math.min(100, Math.max(0, parseFloat(e.target.value) || 0)),
+                        )
+                      }
+                      className="w-16 h-7 text-xs border-[#E5DFD6] bg-white font-mono"
+                    />
+                  </div>
+
+                  <div className="text-right">
+                    <span className="text-[#8A8178]">Subtotal Editorial: </span>
+                    <strong className="text-sm text-[#1E1B16] font-mono">
+                      {valorTotalEditorial.toLocaleString('pt-BR', {
+                        style: 'currency',
+                        currency: 'BRL',
+                      })}
+                    </strong>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
 
           {/* PARTE 2 — PRODUÇÃO GRÁFICA (Impressão do Livro) */}

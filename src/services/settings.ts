@@ -88,9 +88,32 @@ export async function getCompanySettings(): Promise<CompanySettings> {
 /**
  * Atualiza ou cria o registro global de configurações da empresa.
  */
+export function getCompanyLogoUrl(
+  settings: CompanySettings | Partial<CompanySettings> | null | undefined,
+): string | null {
+  if (!settings || !settings.logo) return null
+  if (
+    settings.logo.startsWith('http://') ||
+    settings.logo.startsWith('https://') ||
+    settings.logo.startsWith('data:')
+  ) {
+    return settings.logo
+  }
+  if (settings.id && settings.collectionId) {
+    return pb.files.getURL(settings as any, settings.logo)
+  }
+  if (settings.id) {
+    return pb.files.getURL(
+      { id: settings.id, collectionName: 'company_settings' } as any,
+      settings.logo,
+    )
+  }
+  return null
+}
+
 export async function updateCompanySettings(
   id: string | null | undefined,
-  data: Partial<CompanySettings>,
+  data: Partial<CompanySettings> | FormData,
 ): Promise<CompanySettings> {
   if (id && id !== 'default') {
     return await pb.collection('company_settings').update<CompanySettings>(id, data)
@@ -104,6 +127,10 @@ export async function updateCompanySettings(
     }
   } catch {
     /* intentionally ignored */
+  }
+
+  if (data instanceof FormData) {
+    return await pb.collection('company_settings').create<CompanySettings>(data)
   }
 
   return await pb.collection('company_settings').create<CompanySettings>({
