@@ -39,50 +39,75 @@ export function gerarTextoCondicoes(settings: Partial<CompanySettings>): string 
 }
 
 /**
+ * Helper para executar chamadas assíncronas com retry e backoff exponencial em caso de erro transitório ou rate limit (429 / 503)
+ */
+async function withRetry<T>(fn: () => Promise<T>, retries = 3, initialDelay = 400): Promise<T> {
+  let attempt = 0
+  let delay = initialDelay
+
+  while (true) {
+    try {
+      return await fn()
+    } catch (err: any) {
+      attempt++
+      const status = err?.status ?? err?.response?.status
+      const isTransient = status === 429 || status === 503 || status === 502 || status === 0
+      if (isTransient && attempt <= retries) {
+        await new Promise((resolve) => setTimeout(resolve, delay))
+        delay *= 2
+        continue
+      }
+      throw err
+    }
+  }
+}
+
+function buildFallbackSettings(): CompanySettings {
+  return {
+    id: 'default',
+    nome_comercial: DEFAULT_COMPANY_SETTINGS.nome_comercial,
+    razao_social: DEFAULT_COMPANY_SETTINGS.razao_social,
+    cnpj: DEFAULT_COMPANY_SETTINGS.cnpj,
+    cidade_uf: DEFAULT_COMPANY_SETTINGS.cidade_uf,
+    telefone: DEFAULT_COMPANY_SETTINGS.telefone,
+    email: DEFAULT_COMPANY_SETTINGS.email,
+    portal: DEFAULT_COMPANY_SETTINGS.portal,
+    prazo_execucao_dias: DEFAULT_COMPANY_SETTINGS.prazo_execucao_dias,
+    condicoes_pagamento: DEFAULT_COMPANY_SETTINGS.condicoes_pagamento,
+    condicoes_entrega: DEFAULT_COMPANY_SETTINGS.condicoes_entrega,
+    validade_proposta_dias: DEFAULT_COMPANY_SETTINGS.validade_proposta_dias,
+    texto_condicoes_padrao: DEFAULT_COMPANY_SETTINGS.texto_condicoes_padrao,
+    created: new Date().toISOString(),
+    updated: new Date().toISOString(),
+    collectionId: '',
+    collectionName: 'company_settings',
+  }
+}
+
+/**
  * Busca as configurações da empresa gravadas no PocketBase.
- * Caso ainda não haja registro ou ocorra erro, retorna os valores padrão seguros.
+ * Apenas lê com retry e backoff; se falhar ou não houver registro,
+ * retorna o fallback em memória sem tentar criar nenhum registro no banco.
  */
 export async function getCompanySettings(): Promise<CompanySettings> {
   try {
-    const list = await pb.collection('company_settings').getList<CompanySettings>(1, 1, {
-      sort: 'created',
-      requestKey: null,
-    })
+    const list = await withRetry(() =>
+      pb.collection('company_settings').getList<CompanySettings>(1, 1, {
+        sort: 'created',
+        requestKey: null,
+      }),
+    )
     if (list.items.length > 0) {
       return list.items[0]
     }
   } catch (err) {
-    console.warn('Erro ao carregar company_settings do PocketBase, usando defaults:', err)
+    console.warn(
+      'Erro ao carregar company_settings do PocketBase, usando defaults em memória:',
+      err,
+    )
   }
 
-  // Tenta criar se não existir nenhum
-  try {
-    const created = await pb
-      .collection('company_settings')
-      .create<CompanySettings>(DEFAULT_COMPANY_SETTINGS)
-    return created
-  } catch {
-    // Retorna fallback em memória se create falhar (ex: sem autenticação momentânea)
-    return {
-      id: 'default',
-      nome_comercial: DEFAULT_COMPANY_SETTINGS.nome_comercial,
-      razao_social: DEFAULT_COMPANY_SETTINGS.razao_social,
-      cnpj: DEFAULT_COMPANY_SETTINGS.cnpj,
-      cidade_uf: DEFAULT_COMPANY_SETTINGS.cidade_uf,
-      telefone: DEFAULT_COMPANY_SETTINGS.telefone,
-      email: DEFAULT_COMPANY_SETTINGS.email,
-      portal: DEFAULT_COMPANY_SETTINGS.portal,
-      prazo_execucao_dias: DEFAULT_COMPANY_SETTINGS.prazo_execucao_dias,
-      condicoes_pagamento: DEFAULT_COMPANY_SETTINGS.condicoes_pagamento,
-      condicoes_entrega: DEFAULT_COMPANY_SETTINGS.condicoes_entrega,
-      validade_proposta_dias: DEFAULT_COMPANY_SETTINGS.validade_proposta_dias,
-      texto_condicoes_padrao: DEFAULT_COMPANY_SETTINGS.texto_condicoes_padrao,
-      created: new Date().toISOString(),
-      updated: new Date().toISOString(),
-      collectionId: '',
-      collectionName: 'company_settings',
-    }
-  }
+  return buildFallbackSettings()
 }
 
 /**
@@ -120,15 +145,16 @@ export async function updateCompanySettings(
   }
 
   // Verifica se já existe um registro para atualizar em vez de duplicar
-  try {
-    const list = await pb.collection('company_settings').getList<CompanySettings>(1, 1)
-    if (list.items.length > 0) {
-      return await pb.collection('company_settings').update<CompanySettings>(list.items[0].id, data)
-    }
-  } catch {
-    /* intentionally ignored */
+  const list = await pb.collection('company_settings').getList<CompanySettings>(1, 1, {
+    sort: 'created',
+    requestKey: null,
+  })
+
+  if (list.items.length > 0) {
+    return await pb.collection('company_settings').update<CompanySettings>(list.items[0].id, data)
   }
 
+  // Cria apenas se for estritamente confirmado por leitura fresca que não existe nenhum registro
   if (data instanceof FormData) {
     return await pb.collection('company_settings').create<CompanySettings>(data)
   }
