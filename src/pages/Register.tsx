@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/card'
 import { BookOpen, Printer } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
+import { getErrorMessage, isNetworkError } from '@/lib/pocketbase/errors'
 
 export default function Register() {
   const [name, setName] = useState('')
@@ -46,9 +47,12 @@ export default function Register() {
       })
       navigate('/')
     } catch (error: any) {
+      const description = isNetworkError(error)
+        ? 'Não foi possível conectar ao servidor. Verifique sua conexão e tente novamente.'
+        : getErrorMessage(error)
       toast({
         title: 'Erro ao cadastrar',
-        description: error?.message || 'Verifique seus dados e tente novamente.',
+        description,
         variant: 'destructive',
       })
     } finally {

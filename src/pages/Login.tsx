@@ -12,38 +12,57 @@ import {
   CardTitle,
   CardFooter,
 } from '@/components/ui/card'
-import { BookOpen, Printer } from 'lucide-react'
+import { BookOpen, Printer, AlertCircle, RefreshCw } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
+import { getErrorMessage, isNetworkError } from '@/lib/pocketbase/errors'
 
 export default function Login() {
   const [email, setEmail] = useState('renandm@gmail.com')
   const [password, setPassword] = useState('Skip@Pass')
   const [isLoading, setIsLoading] = useState(false)
+  const [networkError, setNetworkError] = useState<string | null>(null)
   const { login } = useAuth()
   const navigate = useNavigate()
   const { toast } = useToast()
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!email || !password) return
+  const handleLogin = async (targetEmail = email, targetPassword = password) => {
+    if (!targetEmail || !targetPassword) return
 
     setIsLoading(true)
+    setNetworkError(null)
     try {
-      await login(email, password)
+      await login(targetEmail, targetPassword)
       toast({
         title: 'Bem-vindo de volta!',
         description: 'Login efetuado com sucesso.',
       })
       navigate('/')
     } catch (error: any) {
-      toast({
-        title: 'Falha no login',
-        description: error?.message || 'Email ou senha inválidos. Tente novamente.',
-        variant: 'destructive',
-      })
+      if (isNetworkError(error)) {
+        const netMsg =
+          'Não foi possível conectar ao servidor. Verifique sua conexão e tente novamente.'
+        setNetworkError(netMsg)
+        toast({
+          title: 'Erro de conexão',
+          description: netMsg,
+          variant: 'destructive',
+        })
+      } else {
+        const message = getErrorMessage(error) || 'Email ou senha inválidos. Tente novamente.'
+        toast({
+          title: 'Falha no login',
+          description: message,
+          variant: 'destructive',
+        })
+      }
     } finally {
       setIsLoading(false)
     }
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    await handleLogin()
   }
 
   return (
@@ -109,6 +128,26 @@ export default function Login() {
                   className="border-[#E5DFD6] focus-visible:ring-[#B3541E]"
                 />
               </div>
+
+              {networkError && (
+                <div className="p-3 rounded-md bg-amber-50 border border-amber-200 text-amber-900 text-xs flex flex-col gap-2">
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                    <p className="leading-relaxed">{networkError}</p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleLogin()}
+                    disabled={isLoading}
+                    className="self-start text-xs border-amber-300 text-amber-900 hover:bg-amber-100 flex items-center gap-1.5 h-7 px-2.5"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+                    Tentar novamente
+                  </Button>
+                </div>
+              )}
 
               <div className="p-3 bg-[#FAF8F5] rounded border border-[#E5DFD6] text-xs text-[#8A8178]">
                 <p className="font-semibold text-[#1E1B16] mb-0.5">Acesso pré-configurado:</p>
