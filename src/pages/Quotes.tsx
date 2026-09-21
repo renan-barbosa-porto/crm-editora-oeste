@@ -1,6 +1,11 @@
 import React, { useEffect, useState, useMemo } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { getQuotes, getQuoteItems, updateQuoteStatus } from '@/services/quotes'
+import {
+  getQuotes,
+  getQuoteItems,
+  getQuoteItemsByQuoteIds,
+  updateQuoteStatus,
+} from '@/services/quotes'
 import { useRealtime } from '@/hooks/use-realtime'
 import type { Quote, QuoteStatus } from '@/types/crm'
 import {
@@ -59,15 +64,26 @@ export default function Quotes() {
   const fetchQuotes = async () => {
     try {
       const allQuotes = await getQuotes('todos')
-      setQuotes(allQuotes)
+      setQuotes(allQuotes || [])
+
+      // Filtra os orçamentos que precisam de busca dos itens (que não vieram via expand)
+      const quotesNeedingItems = (allQuotes || []).filter(
+        (q) => !q.expand?.quote_items_via_quote_id,
+      )
+
+      let itemsByQuoteId: Record<string, any[]> = {}
+      if (quotesNeedingItems.length > 0) {
+        try {
+          itemsByQuoteId = await getQuoteItemsByQuoteIds(quotesNeedingItems.map((q) => q.id))
+        } catch (itemsErr) {
+          console.warn('Erro ao carregar itens de orçamentos em lote:', itemsErr)
+        }
+      }
 
       const valuesMap: Record<string, number> = {}
-      for (const q of allQuotes) {
+      for (const q of allQuotes || []) {
         try {
-          let items = q.expand?.quote_items_via_quote_id
-          if (!items) {
-            items = await getQuoteItems(q.id)
-          }
+          const items = q.expand?.quote_items_via_quote_id || itemsByQuoteId[q.id] || []
           valuesMap[q.id] = calcularValorQuote(q, items)
         } catch {
           valuesMap[q.id] = calcularValorQuote(q)

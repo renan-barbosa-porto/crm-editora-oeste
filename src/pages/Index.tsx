@@ -1,7 +1,12 @@
 import React, { useEffect, useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getLeads } from '@/services/leads'
-import { getQuotes, getQuoteItems, updateQuoteStatus } from '@/services/quotes'
+import {
+  getQuotes,
+  getQuoteItems,
+  getQuoteItemsByQuoteIds,
+  updateQuoteStatus,
+} from '@/services/quotes'
 import { useRealtime } from '@/hooks/use-realtime'
 import type { Lead, Quote } from '@/types/crm'
 import {
@@ -60,13 +65,23 @@ export default function Index() {
       setQuotes(quotesData)
 
       // Buscar valores dos orçamentos considerando a tiragem de valorização
-      const valuesMap: Record<string, number> = {}
-      for (const q of quotesData) {
+      const quotesNeedingItems = (quotesData || []).filter(
+        (q) => !q.expand?.quote_items_via_quote_id,
+      )
+
+      let itemsByQuoteId: Record<string, any[]> = {}
+      if (quotesNeedingItems.length > 0) {
         try {
-          let items = q.expand?.quote_items_via_quote_id
-          if (!items) {
-            items = await getQuoteItems(q.id)
-          }
+          itemsByQuoteId = await getQuoteItemsByQuoteIds(quotesNeedingItems.map((q) => q.id))
+        } catch (itemsErr) {
+          console.warn('Erro ao carregar itens de orçamentos em lote no painel:', itemsErr)
+        }
+      }
+
+      const valuesMap: Record<string, number> = {}
+      for (const q of quotesData || []) {
+        try {
+          const items = q.expand?.quote_items_via_quote_id || itemsByQuoteId[q.id] || []
           valuesMap[q.id] = calcularValorQuote(q, items)
         } catch {
           valuesMap[q.id] = calcularValorQuote(q)

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { getLeadById, updateLead, deleteLead } from '@/services/leads'
-import { getQuotesByLeadId, getQuoteItems } from '@/services/quotes'
+import { getQuotesByLeadId, getQuoteItems, getQuoteItemsByQuoteIds } from '@/services/quotes'
 import { useRealtime } from '@/hooks/use-realtime'
 import type { Lead, Quote, LeadEstagio } from '@/types/crm'
 import {
@@ -89,10 +89,20 @@ export default function LeadDetail() {
       setEditObservacoes(leadData.observacoes || '')
 
       // Buscar valores dos orçamentos
-      const valMap: Record<string, number> = {}
-      for (const q of quotesData) {
+      const quoteIds = (quotesData || []).map((q) => q.id)
+      let itemsByQuoteId: Record<string, any[]> = {}
+      if (quoteIds.length > 0) {
         try {
-          const items = await getQuoteItems(q.id)
+          itemsByQuoteId = await getQuoteItemsByQuoteIds(quoteIds)
+        } catch (itemsErr) {
+          console.warn('Erro ao carregar itens de orçamentos do lead:', itemsErr)
+        }
+      }
+
+      const valMap: Record<string, number> = {}
+      for (const q of quotesData || []) {
+        try {
+          const items = itemsByQuoteId[q.id] || []
           const subtotal = items.reduce(
             (acc, it) => acc + (it.quantidade || 0) * (it.valor_unitario || 0),
             0,

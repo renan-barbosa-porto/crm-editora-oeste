@@ -93,12 +93,95 @@ export async function deleteQuote(id: string): Promise<boolean> {
   return await pb.collection('quotes').delete(id)
 }
 
+/**
+ * Helper para executar chamadas assíncronas com retry e backoff exponencial em caso de erro 429
+ */
+async function withRetry<T>(fn: () => Promise<T>, retries = 3, initialDelay = 400): Promise<T> {
+  let attempt = 0
+  let delay = initialDelay
+
+  while (true) {
+    try {
+      return await fn()
+    } catch (err: any) {
+      attempt++
+      const isRateLimit = err?.status === 429 || err?.response?.status === 429
+      if (isRateLimit && attempt <= retries) {
+        await new Promise((resolve) => setTimeout(resolve, delay))
+        delay *= 2
+        continue
+      }
+      throw err
+    }
+  }
+}
+
 // Quote Items
 export async function getQuoteItems(quoteId: string): Promise<QuoteItem[]> {
-  return await pb.collection('quote_items').getFullList<QuoteItem>({
-    filter: `quote_id = '${quoteId}'`,
-    sort: 'created',
-  })
+  try {
+    return await withRetry(() =>
+      pb.collection('quote_items').getFullList<QuoteItem>({
+        filter: `quote_id = '${quoteId}'`,
+        sort: 'created',
+      }),
+    )
+  } catch (err) {
+    console.warn(
+      `[getQuoteItems] Não foi possível carregar itens para o orçamento ${quoteId}:`,
+      err,
+    )
+    return []
+  }
+}
+
+/**
+ * Busca itens de múltiplos orçamentos em lote (batching) com limitação de tamanho de filtro,
+ * eliminando a rajada de requisições individuais paralelas e tratando erros com retry e degradação suave.
+ */
+export async function getQuoteItemsByQuoteIds(
+  quoteIds: string[],
+): Promise<Record<string, QuoteItem[]>> {
+  const result: Record<string, QuoteItem[]> = {}
+  const uniqueIds = Array.from(new Set(quoteIds.filter(Boolean)))
+
+  for (const id of uniqueIds) {
+    result[id] = []
+  }
+
+  if (uniqueIds.length === 0) {
+    return result
+  }
+
+  // Agrupa em blocos de até 25 orçamentos por requisição
+  const CHUNK_SIZE = 25
+  const chunks: string[][] = []
+  for (let i = 0; i < uniqueIds.length; i += CHUNK_SIZE) {
+    chunks.push(uniqueIds.slice(i, i + CHUNK_SIZE))
+  }
+
+  // Executa os lotes em sequência (ou pequenos passos) para evitar concorrência excessiva
+  for (const chunk of chunks) {
+    try {
+      const filterClause = chunk.map((id) => `quote_id = '${id}'`).join(' || ')
+      const items = await withRetry(() =>
+        pb.collection('quote_items').getFullList<QuoteItem>({
+          filter: `(${filterClause})`,
+          sort: 'created',
+        }),
+      )
+
+      for (const item of items) {
+        if (item.quote_id && result[item.quote_id]) {
+          result[item.quote_id].push(item)
+        }
+      }
+    } catch (err) {
+      console.warn('[getQuoteItemsByQuoteIds] Erro ao carregar lote de itens:', err)
+      // Degradação graciosa: os orçamentos do bloco continuam vazios em result sem estourar runtime
+    }
+  }
+
+  return result
 }
 
 export async function createQuoteItem(data: Partial<QuoteItem>): Promise<QuoteItem> {
