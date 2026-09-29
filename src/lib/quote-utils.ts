@@ -16,15 +16,18 @@ export interface PrazoStatusInfo {
  * Se o campo data_envio estiver preenchido, usa-o.
  * Se não, para propostas enviadas/visualizadas usa a data de criação do orçamento como fallback.
  */
-export function getQuoteDataEnvio(quote: Quote): Date | null {
+export function getQuoteDataEnvio(quote: Quote | null | undefined): Date | null {
+  if (!quote) return null
   if (quote.data_envio) {
     const d = new Date(quote.data_envio)
     if (!isNaN(d.getTime())) return d
   }
   // Se está Enviado ou Visualizado mas não possui data_envio explícita, usa created como fallback
   if (quote.status === 'Enviado' || quote.status === 'Visualizado') {
-    const d = new Date(quote.created)
-    if (!isNaN(d.getTime())) return d
+    if (quote.created) {
+      const d = new Date(quote.created)
+      if (!isNaN(d.getTime())) return d
+    }
   }
   return null
 }
@@ -32,13 +35,14 @@ export function getQuoteDataEnvio(quote: Quote): Date | null {
 /**
  * Calcula a quantidade de dias inteiros transcorridos desde a data de envio.
  */
-export function calcularDiasSemResposta(quote: Quote): number | null {
+export function calcularDiasSemResposta(quote: Quote | null | undefined): number | null {
+  if (!quote) return null
   const dataEnvio = getQuoteDataEnvio(quote)
   if (!dataEnvio) return null
 
   const now = new Date()
   const diffTime = now.getTime() - dataEnvio.getTime()
-  if (diffTime < 0) return 0
+  if (isNaN(diffTime) || diffTime < 0) return 0
   return Math.floor(diffTime / (1000 * 60 * 60 * 24))
 }
 
@@ -85,51 +89,72 @@ export function getUltimoNumeroPropostaUsado(quotes: Quote[]): string | null {
  *   Se 'combinar' e não tiver editorial, retorna 0 (entra na contagem sem valor monetário).
  */
 export function calcularValorQuote(
-  quote: Quote,
+  quote: Quote | null | undefined,
   items?: { quantidade?: number; valor_unitario?: number }[],
 ): number {
+  if (!quote) return 0
   let total = 0
 
-  // 1. Produção editorial (se aplicável)
-  const incluiEditorial = quote.inclui_editorial !== false
-  if (incluiEditorial) {
-    const quoteItems = items || quote.expand?.quote_items_via_quote_id || []
-    const subtotalEditorial = quoteItems.reduce((acc, it) => {
-      const q = it.quantidade || 0
-      const v = it.valor_unitario || 0
-      return acc + q * v
-    }, 0)
-    const desc = quote.desconto_percentual || 0
-    const descVal = (subtotalEditorial * desc) / 100
-    total += Math.max(0, subtotalEditorial - descVal)
-  }
+  try {
+    // 1. Produção editorial (se aplicável)
+    const incluiEditorial = quote.inclui_editorial !== false
+    if (incluiEditorial) {
+      const quoteItems = Array.isArray(items)
+        ? items
+        : Array.isArray(quote.expand?.quote_items_via_quote_id)
+          ? quote.expand.quote_items_via_quote_id
+          : []
+      const subtotalEditorial = quoteItems.reduce((acc, it) => {
+        if (!it) return acc
+        const q = Number(it.quantidade) || 0
+        const v = Number(it.valor_unitario) || 0
+        return acc + q * v
+      }, 0)
+      const desc = Number(quote.desconto_percentual) || 0
+      const descVal = (subtotalEditorial * desc) / 100
+      total += Math.max(0, subtotalEditorial - descVal)
+    }
 
-  // 2. Produção gráfica por tiragem de valorização
-  const tiragemValorizacao = quote.tiragem_valorizacao || '50'
-  if (tiragemValorizacao !== 'combinar') {
-    let tiragensList: { tiragem: number; valor_unitario: number; valor_total?: number }[] = []
-    if (Array.isArray(quote.grafica_tiragens)) {
-      tiragensList = quote.grafica_tiragens
-    } else if (typeof quote.grafica_tiragens === 'string') {
-      try {
-        tiragensList = JSON.parse(quote.grafica_tiragens)
-      } catch {
-        tiragensList = []
+    // 2. Produção gráfica por tiragem de valorização
+    const tiragemValorizacao = quote.tiragem_valorizacao || '50'
+    if (tiragemValorizacao !== 'combinar') {
+      let tiragensList: { tiragem?: number; valor_unitario?: number; valor_total?: number }[] = []
+      if (Array.isArray(quote.grafica_tiragens)) {
+        tiragensList = quote.grafica_tiragens
+      } else if (typeof quote.grafica_tiragens === 'string' && quote.grafica_tiragens.trim()) {
+        try {
+          const parsed = JSON.parse(quote.grafica_tiragens)
+          if (Array.isArray(parsed)) {
+            tiragensList = parsed
+          }
+        } catch {
+          tiragensList = []
+        }
+      }
+
+      const tiragemAlvo = parseInt(String(tiragemValorizacao), 10)
+      if (!isNaN(tiragemAlvo) && Array.isArray(tiragensList)) {
+        const linha = tiragensList.find((t) => t && Number(t.tiragem) === tiragemAlvo)
+        if (linha) {
+          const vTot = Number(linha.valor_total)
+          const vUnit = Number(linha.valor_unitario) || 0
+          const tir = Number(linha.tiragem) || tiragemAlvo
+          const valorLote = !isNaN(vTot) && vTot > 0 ? vTot : tir * vUnit
+          if (!isNaN(valorLote)) {
+            total += valorLote
+          }
+        }
       }
     }
-
-    const tiragemAlvo = parseInt(tiragemValorizacao, 10)
-    const linha = tiragensList.find((t) => t.tiragem === tiragemAlvo)
-    if (linha) {
-      const valorLote = linha.valor_total || linha.tiragem * linha.valor_unitario
-      total += valorLote
-    }
+  } catch (err) {
+    console.warn('[calcularValorQuote] Erro seguro ao calcular valor do orçamento:', err)
   }
 
-  return total
+  return isNaN(total) ? 0 : total
 }
 
-export function getPrazoDestaque(quote: Quote): PrazoStatusInfo | null {
+export function getPrazoDestaque(quote: Quote | null | undefined): PrazoStatusInfo | null {
+  if (!quote) return null
   // Apenas relevante para orçamentos enviados sem resposta definitiva (Enviado ou Visualizado)
   if (quote.status !== 'Enviado' && quote.status !== 'Visualizado') {
     return null

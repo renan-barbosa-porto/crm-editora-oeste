@@ -11,6 +11,7 @@ export async function getQuotes(statusFilter?: string): Promise<Quote[]> {
       sort: 'created',
       filter,
       expand: 'lead_id,contact_id',
+      requestKey: null,
     })
   } else if (statusFilter === 'rascunhos') {
     filter = "status = 'Rascunho'"
@@ -28,6 +29,7 @@ export async function getQuotes(statusFilter?: string): Promise<Quote[]> {
     sort: '-created',
     filter,
     expand: 'lead_id,contact_id',
+    requestKey: null,
   })
 }
 

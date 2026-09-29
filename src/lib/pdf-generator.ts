@@ -36,7 +36,8 @@ export const TIRAGENS_PADRAO: GraficaTiragemRow[] = [
   },
 ]
 
-export function parseTiragens(quote: Quote): GraficaTiragemRow[] {
+export function parseTiragens(quote: Quote | null | undefined): GraficaTiragemRow[] {
+  if (!quote) return TIRAGENS_PADRAO
   if (Array.isArray(quote.grafica_tiragens)) {
     return quote.grafica_tiragens
   }
@@ -52,7 +53,8 @@ export function parseTiragens(quote: Quote): GraficaTiragemRow[] {
 }
 
 export function formatCurrencyBRL(val: number): string {
-  return (val || 0).toLocaleString('pt-BR', {
+  const num = Number(val)
+  return (isNaN(num) ? 0 : num).toLocaleString('pt-BR', {
     style: 'currency',
     currency: 'BRL',
   })

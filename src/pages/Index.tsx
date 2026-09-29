@@ -34,6 +34,7 @@ import { cn } from '@/lib/utils'
 import { getPrazoDestaque, getQuoteDataEnvio, calcularValorQuote } from '@/lib/quote-utils'
 import { Lock } from 'lucide-react'
 import { useCompanySettings } from '@/contexts/SettingsContext'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
 import {
   parseTiragens,
   ESPECIFICACOES_GRAFICAS_PADRAO,
@@ -380,77 +381,81 @@ export default function Index() {
                     : 'Hoje'
 
                   return (
-                    <div
-                      key={quote.id}
-                      onClick={() => navigate(`/orcamentos/${quote.id}`)}
-                      className={cn(
-                        'p-3.5 cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-[#FAF8F5] transition-colors',
-                        prazo ? prazo.bgHighlightClass : '',
-                      )}
-                    >
-                      <div className="space-y-1 min-w-0 flex-1">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-mono text-xs font-semibold text-[#8A8178] flex items-center gap-1">
-                            {quote.numero_referencia || quote.codigo || 'ORC'}
-                            {quote.pdf_locked && (
-                              <span title="Congelado após PDF" className="inline-flex items-center">
-                                <Lock className="w-3 h-3 text-amber-600" />
-                              </span>
-                            )}
-                          </span>
-                          <span className="font-semibold text-sm text-[#1E1B16] truncate">
-                            {quote.titulo}
-                          </span>
-                          {prazo && (
-                            <Badge className={cn('text-[10px] px-1.5 py-0.2', prazo.badgeClass)}>
-                              {prazo.label}
-                            </Badge>
-                          )}
-                        </div>
-                        <p className="text-xs text-[#8A8178]">
-                          Cliente: <strong className="text-[#1E1B16]">{clienteNome}</strong> •
-                          Enviado: {dataEnvioFmt}
-                        </p>
-                      </div>
-
-                      <div className="flex items-center gap-3 justify-between sm:justify-end">
-                        {quote.tiragem_valorizacao === 'combinar' &&
-                        quote.inclui_editorial === false ? (
-                          <span className="text-xs font-mono text-[#8A8178]">A combinar</span>
-                        ) : (
-                          <span className="font-mono font-bold text-sm text-[#B3541E]">
-                            {valor}
-                          </span>
+                    <ErrorBoundary key={quote.id}>
+                      <div
+                        onClick={() => navigate(`/orcamentos/${quote.id}`)}
+                        className={cn(
+                          'p-3.5 cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-[#FAF8F5] transition-colors',
+                          prazo ? prazo.bgHighlightClass : '',
                         )}
+                      >
+                        <div className="space-y-1 min-w-0 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-mono text-xs font-semibold text-[#8A8178] flex items-center gap-1">
+                              {quote.numero_referencia || quote.codigo || 'ORC'}
+                              {quote.pdf_locked && (
+                                <span
+                                  title="Congelado após PDF"
+                                  className="inline-flex items-center"
+                                >
+                                  <Lock className="w-3 h-3 text-amber-600" />
+                                </span>
+                              )}
+                            </span>
+                            <span className="font-semibold text-sm text-[#1E1B16] truncate">
+                              {quote.titulo || 'Sem título'}
+                            </span>
+                            {prazo && (
+                              <Badge className={cn('text-[10px] px-1.5 py-0.2', prazo.badgeClass)}>
+                                {prazo.label}
+                              </Badge>
+                            )}
+                          </div>
+                          <p className="text-xs text-[#8A8178]">
+                            Cliente: <strong className="text-[#1E1B16]">{clienteNome}</strong> •
+                            Enviado: {dataEnvioFmt}
+                          </p>
+                        </div>
 
-                        <div
-                          className="flex items-center gap-1.5"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={(e) => handleOpenPdf(quote, e)}
-                            className="h-7 text-xs border-[#E5DFD6] text-[#4A4238] hover:bg-white"
-                            title="Gerar PDF"
-                          >
-                            <Printer className="w-3 h-3 mr-1" />
-                            PDF
-                          </Button>
+                        <div className="flex items-center gap-3 justify-between sm:justify-end">
+                          {quote.tiragem_valorizacao === 'combinar' &&
+                          quote.inclui_editorial === false ? (
+                            <span className="text-xs font-mono text-[#8A8178]">A combinar</span>
+                          ) : (
+                            <span className="font-mono font-bold text-sm text-[#B3541E]">
+                              {valor}
+                            </span>
+                          )}
 
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={(e) => handleEsfriarQuote(quote.id, e)}
-                            className="h-7 text-xs text-slate-500 hover:text-slate-700 hover:bg-slate-100"
-                            title="Esfriar orçamento"
+                          <div
+                            className="flex items-center gap-1.5"
+                            onClick={(e) => e.stopPropagation()}
                           >
-                            <Snowflake className="w-3 h-3 mr-1" />
-                            Esfriar
-                          </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={(e) => handleOpenPdf(quote, e)}
+                              className="h-7 text-xs border-[#E5DFD6] text-[#4A4238] hover:bg-white"
+                              title="Gerar PDF"
+                            >
+                              <Printer className="w-3 h-3 mr-1" />
+                              PDF
+                            </Button>
+
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={(e) => handleEsfriarQuote(quote.id, e)}
+                              className="h-7 text-xs text-slate-500 hover:text-slate-700 hover:bg-slate-100"
+                              title="Esfriar orçamento"
+                            >
+                              <Snowflake className="w-3 h-3 mr-1" />
+                              Esfriar
+                            </Button>
+                          </div>
                         </div>
                       </div>
-                    </div>
+                    </ErrorBoundary>
                   )
                 })
               )}
