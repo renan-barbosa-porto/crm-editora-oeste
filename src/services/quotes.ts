@@ -5,18 +5,21 @@ export async function getQuotes(statusFilter?: string): Promise<Quote[]> {
   let filter: string | undefined = undefined
 
   if (statusFilter === 'pendentes') {
-    filter = "status = 'Rascunho' || status = 'Enviado' || status = 'Visualizado'"
-    // Listas de orçamentos pendentes devem ficar ordenadas do mais antigo para o mais recente
-    // (mais antigo no topo, sempre visível primeiro)
+    filter = "status = 'Enviado' || status = 'Visualizado'"
+    // Listas de orçamentos pendentes de follow-up ordenadas do mais antigo para o mais recente
     return await pb.collection('quotes').getFullList<Quote>({
       sort: 'created',
       filter,
       expand: 'lead_id,contact_id',
     })
+  } else if (statusFilter === 'rascunhos') {
+    filter = "status = 'Rascunho'"
   } else if (statusFilter === 'aprovados') {
     filter = "status = 'Aprovado'"
   } else if (statusFilter === 'rejeitados') {
     filter = "status = 'Rejeitado'"
+  } else if (statusFilter === 'esfriados') {
+    filter = "status = 'Esfriou'"
   } else if (statusFilter && statusFilter !== 'todos') {
     filter = `status = '${statusFilter}'`
   }

@@ -21,6 +21,8 @@ import {
   Clock,
   Printer,
   Snowflake,
+  FileEdit,
+  Send,
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -121,6 +123,24 @@ export default function Index() {
     }
   }
 
+  // Ação rápida Enviar (Rascunho -> Enviado)
+  const handleMarcarEnviado = async (quoteId: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    try {
+      await updateQuoteStatus(quoteId, 'Enviado')
+      setQuotes((prev) => prev.map((q) => (q.id === quoteId ? { ...q, status: 'Enviado' } : q)))
+      toast({
+        title: 'Orçamento marcado como Enviado',
+        description: 'Agora ativo no painel de follow-up.',
+      })
+    } catch {
+      toast({
+        title: 'Erro ao enviar orçamento',
+        variant: 'destructive',
+      })
+    }
+  }
+
   // Abrir PDF
   const handleOpenPdf = async (quote: Quote, e: React.MouseEvent) => {
     e.stopPropagation()
@@ -140,9 +160,10 @@ export default function Index() {
   // Estatísticas do Painel
   const stats = useMemo(() => {
     const totalLeads = leads.length
-    const orcamentosAtivos = quotes.filter(
-      (q) => q.status === 'Enviado' || q.status === 'Visualizado' || q.status === 'Rascunho',
+    const orcamentosPendentes = quotes.filter(
+      (q) => q.status === 'Enviado' || q.status === 'Visualizado',
     ).length
+    const rascunhos = quotes.filter((q) => q.status === 'Rascunho').length
 
     const orcamentosAprovados = quotes.filter((q) => q.status === 'Aprovado')
     const orcamentosEsfriados = quotes.filter((q) => q.status === 'Esfriou').length
@@ -155,22 +176,31 @@ export default function Index() {
 
     return {
       totalLeads,
-      orcamentosAtivos,
+      orcamentosPendentes,
+      rascunhos,
       orcamentosEsfriados,
       valorAprovado,
       taxaConversao,
     }
   }, [leads, quotes, quoteValues])
 
-  // Orçamentos Pendentes ordenados: mais antigos primeiro (atenção prioritária)
+  // Orçamentos Pendentes de follow-up (apenas enviados/visualizados): mais antigos primeiro
   const pendentesOrdenados = useMemo(() => {
-    const pendentes = quotes.filter(
-      (q) => q.status === 'Enviado' || q.status === 'Visualizado' || q.status === 'Rascunho',
-    )
+    const pendentes = quotes.filter((q) => q.status === 'Enviado' || q.status === 'Visualizado')
     return pendentes.sort((a, b) => {
       const timeA = getQuoteDataEnvio(a)?.getTime() || new Date(a.created).getTime()
       const timeB = getQuoteDataEnvio(b)?.getTime() || new Date(b.created).getTime()
       return timeA - timeB
+    })
+  }, [quotes])
+
+  // Rascunhos Recentes: criados recentemente, ordenados do mais novo para o mais antigo
+  const rascunhosOrdenados = useMemo(() => {
+    const rasc = quotes.filter((q) => q.status === 'Rascunho')
+    return rasc.sort((a, b) => {
+      const timeA = new Date(a.created).getTime()
+      const timeB = new Date(b.created).getTime()
+      return timeB - timeA // Mais recentes primeiro
     })
   }, [quotes])
 
@@ -243,14 +273,17 @@ export default function Index() {
           </CardContent>
         </Card>
 
-        <Card className="bg-white border-[#E5DFD6] shadow-xs">
+        <Card
+          onClick={() => navigate('/orcamentos?tab=pendentes')}
+          className="bg-white border-[#E5DFD6] shadow-xs cursor-pointer hover:border-[#B3541E]/40 transition-colors"
+        >
           <CardContent className="p-4 flex items-center justify-between">
             <div>
               <p className="text-xs uppercase tracking-wider text-[#8A8178] font-semibold">
                 Orçamentos Pendentes
               </p>
               <h3 className="font-serif text-2xl font-bold text-[#B3541E] mt-1">
-                {stats.orcamentosAtivos}
+                {stats.orcamentosPendentes}
               </h3>
             </div>
             <div className="w-10 h-10 rounded-full bg-[#FAF3EC] flex items-center justify-center text-[#B3541E]">
@@ -259,18 +292,21 @@ export default function Index() {
           </CardContent>
         </Card>
 
-        <Card className="bg-white border-[#E5DFD6] shadow-xs">
+        <Card
+          onClick={() => navigate('/orcamentos?tab=rascunhos')}
+          className="bg-white border-[#E5DFD6] shadow-xs cursor-pointer hover:border-amber-400/60 transition-colors"
+        >
           <CardContent className="p-4 flex items-center justify-between">
             <div>
               <p className="text-xs uppercase tracking-wider text-[#8A8178] font-semibold">
-                Orçamentos Esfriados
+                Rascunhos Criados
               </p>
-              <h3 className="font-serif text-2xl font-bold text-slate-700 mt-1">
-                {stats.orcamentosEsfriados}
+              <h3 className="font-serif text-2xl font-bold text-amber-700 mt-1">
+                {stats.rascunhos}
               </h3>
             </div>
-            <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-600">
-              <Snowflake className="w-5 h-5" />
+            <div className="w-10 h-10 rounded-full bg-amber-50 flex items-center justify-center text-amber-600">
+              <FileEdit className="w-5 h-5" />
             </div>
           </CardContent>
         </Card>
@@ -422,19 +458,82 @@ export default function Index() {
           </Card>
         </div>
 
-        {/* Coluna Direita: Alertas de Atenção e Acesso Rápido ao Funil (4 colunas) */}
+        {/* Coluna Direita: Rascunhos Recentes, Alertas e Acesso Rápido (4 colunas) */}
         <div className="lg:col-span-4 space-y-4">
+          {/* Card Rascunhos Recentes criados pelo usuário */}
+          <Card className="bg-white border-[#E5DFD6] shadow-sm">
+            <CardHeader className="p-3.5 border-b border-[#E5DFD6] flex flex-row items-center justify-between">
+              <div>
+                <CardTitle className="font-serif text-sm font-bold text-[#1E1B16] flex items-center gap-2">
+                  <FileEdit className="w-4 h-4 text-amber-700" />
+                  Rascunhos Recentes ({rascunhosOrdenados.length})
+                </CardTitle>
+                <p className="text-[11px] text-[#8A8178] mt-0.5">
+                  Propostas criadas aguardando envio.
+                </p>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => navigate('/orcamentos?tab=rascunhos')}
+                className="text-xs text-[#B3541E] hover:text-[#9A4618] h-7 px-2"
+              >
+                Ver todos <ArrowRight className="w-3 h-3 ml-0.5" />
+              </Button>
+            </CardHeader>
+            <CardContent className="p-2.5 space-y-2 text-xs">
+              {rascunhosOrdenados.length === 0 ? (
+                <p className="text-[#8A8178] py-3 text-center text-xs">
+                  Nenhum rascunho no momento.
+                </p>
+              ) : (
+                rascunhosOrdenados.slice(0, 4).map((q) => {
+                  const clienteNome =
+                    q.expand?.contact_id?.nome || q.expand?.lead_id?.nome || 'Cliente'
+                  const valor = (quoteValues[q.id] || 0).toLocaleString('pt-BR', {
+                    style: 'currency',
+                    currency: 'BRL',
+                  })
+                  return (
+                    <div
+                      key={q.id}
+                      onClick={() => navigate(`/orcamentos/${q.id}`)}
+                      className="p-2 rounded border border-[#E5DFD6] bg-amber-50/40 hover:bg-amber-50 cursor-pointer transition-colors"
+                    >
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="font-mono text-[11px] font-semibold text-[#8A8178]">
+                          {q.numero_referencia || q.codigo || 'ORC'}
+                        </span>
+                        <Badge
+                          variant="outline"
+                          className="text-[10px] px-1.5 py-0 border-amber-300 text-amber-800 bg-amber-100"
+                        >
+                          Rascunho
+                        </Badge>
+                      </div>
+                      <p className="font-semibold text-[#1E1B16] truncate mt-0.5">{q.titulo}</p>
+                      <div className="flex items-center justify-between mt-1 text-[11px] text-[#8A8178]">
+                        <span className="truncate max-w-[120px]">{clienteNome}</span>
+                        <span className="font-mono font-bold text-[#B3541E]">{valor}</span>
+                      </div>
+                    </div>
+                  )
+                })
+              )}
+            </CardContent>
+          </Card>
+
           {/* Card Alerta de Atenção (>3 dias) */}
           <Card className="bg-white border-[#E5DFD6] shadow-sm">
-            <CardHeader className="p-4 border-b border-[#E5DFD6]">
+            <CardHeader className="p-3.5 border-b border-[#E5DFD6]">
               <CardTitle className="font-serif text-sm font-bold text-[#1E1B16] flex items-center gap-2">
                 <AlertTriangle className="w-4 h-4 text-[#B3261E]" />
                 Necessitam Follow-up ({orcamentosAtencao.length})
               </CardTitle>
             </CardHeader>
-            <CardContent className="p-3.5 space-y-2 text-xs">
+            <CardContent className="p-2.5 space-y-2 text-xs">
               {orcamentosAtencao.length === 0 ? (
-                <p className="text-[#8A8178] py-2 text-center">
+                <p className="text-[#8A8178] py-2 text-center text-xs">
                   Tudo em dia! Nenhum orçamento aguardando há mais de 3 dias.
                 </p>
               ) : (
@@ -468,7 +567,7 @@ export default function Index() {
 
           {/* Atalho para Funil de Leads */}
           <Card className="bg-[#FAF8F5] border-[#E5DFD6] shadow-sm">
-            <CardContent className="p-4 space-y-3">
+            <CardContent className="p-3.5 space-y-2.5">
               <div className="flex items-center gap-2">
                 <Users className="w-4 h-4 text-[#B3541E]" />
                 <h4 className="font-serif font-bold text-sm text-[#1E1B16]">

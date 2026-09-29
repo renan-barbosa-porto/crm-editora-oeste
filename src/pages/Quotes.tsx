@@ -19,6 +19,8 @@ import {
   Printer,
   Snowflake,
   BookOpen,
+  FileEdit,
+  Send,
 } from 'lucide-react'
 import { CatalogManagerModal } from '@/components/modals/CatalogManagerModal'
 import { Button } from '@/components/ui/button'
@@ -165,10 +167,36 @@ export default function Quotes() {
     }
   }
 
-  // Contagem de esfriados
-  const totalEsfriados = useMemo(() => {
-    return quotes.filter((q) => q.status === 'Esfriou').length
+  // Contagens por status para exibir nas abas
+  const tabCounts = useMemo(() => {
+    return {
+      todos: quotes.length,
+      pendentes: quotes.filter((q) => q.status === 'Enviado' || q.status === 'Visualizado').length,
+      rascunhos: quotes.filter((q) => q.status === 'Rascunho').length,
+      aprovados: quotes.filter((q) => q.status === 'Aprovado').length,
+      rejeitados: quotes.filter((q) => q.status === 'Rejeitado').length,
+      esfriados: quotes.filter((q) => q.status === 'Esfriou').length,
+    }
   }, [quotes])
+
+  // Ação rápida: Marcar rascunho como Enviado
+  const handleMarcarEnviado = async (quoteId: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation()
+    try {
+      await updateQuoteStatus(quoteId, 'Enviado')
+      setQuotes((prev) => prev.map((q) => (q.id === quoteId ? { ...q, status: 'Enviado' } : q)))
+      toast({
+        title: 'Orçamento marcado como Enviado',
+        description: 'O orçamento agora está ativo e entra no fluxo de follow-up.',
+      })
+    } catch {
+      toast({
+        title: 'Erro ao atualizar status',
+        variant: 'destructive',
+      })
+      fetchQuotes()
+    }
+  }
 
   // Filtragem por abas e busca
   const filteredQuotes = useMemo(() => {
@@ -176,13 +204,17 @@ export default function Quotes() {
       // Filtro de aba
       let matchTab = true
       if (activeTab === 'pendentes') {
-        matchTab = q.status === 'Rascunho' || q.status === 'Enviado' || q.status === 'Visualizado'
+        matchTab = q.status === 'Enviado' || q.status === 'Visualizado'
+      } else if (activeTab === 'rascunhos') {
+        matchTab = q.status === 'Rascunho'
       } else if (activeTab === 'aprovados') {
         matchTab = q.status === 'Aprovado'
       } else if (activeTab === 'rejeitados') {
         matchTab = q.status === 'Rejeitado'
       } else if (activeTab === 'esfriados') {
         matchTab = q.status === 'Esfriou'
+      } else if (activeTab === 'todos') {
+        matchTab = true
       }
 
       // Filtro de busca
@@ -205,7 +237,12 @@ export default function Quotes() {
       })
     }
 
-    return list
+    // Nas outras abas (Rascunhos, Todos, etc.), mais recentes primeiro
+    return [...list].sort((a, b) => {
+      const timeA = new Date(a.created).getTime()
+      const timeB = new Date(b.created).getTime()
+      return timeB - timeA
+    })
   }, [quotes, activeTab, searchTerm])
 
   const getStatusBadge = (status: string) => {
@@ -276,7 +313,7 @@ export default function Quotes() {
         </div>
       </div>
 
-      {/* Abas de Filtro de Status com nova aba 'Esfriados' */}
+      {/* Abas de Filtro de Status */}
       <Tabs
         value={activeTab}
         onValueChange={(val) => {
@@ -288,27 +325,57 @@ export default function Quotes() {
         <TabsList className="bg-[#E9E4DC] p-1 border border-[#E5DFD6] flex-wrap h-auto gap-1">
           <TabsTrigger
             value="pendentes"
-            className="data-[state=active]:bg-white data-[state=active]:text-[#B3541E] font-medium text-xs sm:text-sm"
+            className="data-[state=active]:bg-white data-[state=active]:text-[#B3541E] font-medium text-xs sm:text-sm flex items-center gap-1.5"
           >
             Pendentes (Foco)
+            {tabCounts.pendentes > 0 && (
+              <span className="text-[11px] px-1.5 py-0.2 rounded-full bg-[#FAF3EC] text-[#B3541E] font-semibold">
+                {tabCounts.pendentes}
+              </span>
+            )}
+          </TabsTrigger>
+          <TabsTrigger
+            value="rascunhos"
+            className="data-[state=active]:bg-white data-[state=active]:text-[#8A8178] text-xs sm:text-sm flex items-center gap-1.5"
+          >
+            <FileEdit className="w-3.5 h-3.5 text-[#8A8178]" />
+            Rascunhos
+            {tabCounts.rascunhos > 0 && (
+              <span className="text-[11px] px-1.5 py-0.2 rounded-full bg-amber-100 text-amber-900 font-semibold">
+                {tabCounts.rascunhos}
+              </span>
+            )}
           </TabsTrigger>
           <TabsTrigger
             value="todos"
-            className="data-[state=active]:bg-white data-[state=active]:text-[#1E1B16] text-xs sm:text-sm"
+            className="data-[state=active]:bg-white data-[state=active]:text-[#1E1B16] text-xs sm:text-sm flex items-center gap-1.5"
           >
             Todos
+            <span className="text-[11px] px-1.5 py-0.2 rounded-full bg-gray-200 text-gray-700 font-semibold">
+              {tabCounts.todos}
+            </span>
           </TabsTrigger>
           <TabsTrigger
             value="aprovados"
-            className="data-[state=active]:bg-white data-[state=active]:text-[#2F7D4F] text-xs sm:text-sm"
+            className="data-[state=active]:bg-white data-[state=active]:text-[#2F7D4F] text-xs sm:text-sm flex items-center gap-1.5"
           >
             Aprovados
+            {tabCounts.aprovados > 0 && (
+              <span className="text-[11px] px-1.5 py-0.2 rounded-full bg-green-100 text-green-800 font-semibold">
+                {tabCounts.aprovados}
+              </span>
+            )}
           </TabsTrigger>
           <TabsTrigger
             value="rejeitados"
-            className="data-[state=active]:bg-white data-[state=active]:text-[#B3261E] text-xs sm:text-sm"
+            className="data-[state=active]:bg-white data-[state=active]:text-[#B3261E] text-xs sm:text-sm flex items-center gap-1.5"
           >
             Rejeitados
+            {tabCounts.rejeitados > 0 && (
+              <span className="text-[11px] px-1.5 py-0.2 rounded-full bg-red-100 text-red-800 font-semibold">
+                {tabCounts.rejeitados}
+              </span>
+            )}
           </TabsTrigger>
           <TabsTrigger
             value="esfriados"
@@ -316,9 +383,9 @@ export default function Quotes() {
           >
             <Snowflake className="w-3.5 h-3.5 text-slate-500" />
             Esfriados
-            {totalEsfriados > 0 && (
-              <span className="ml-1 text-[11px] px-1.5 py-0.2 rounded-full bg-slate-200 text-slate-700 font-semibold">
-                {totalEsfriados}
+            {tabCounts.esfriados > 0 && (
+              <span className="text-[11px] px-1.5 py-0.2 rounded-full bg-slate-200 text-slate-700 font-semibold">
+                {tabCounts.esfriados}
               </span>
             )}
           </TabsTrigger>
@@ -361,12 +428,10 @@ export default function Quotes() {
                       quote.expand?.contact_id?.nome ||
                       quote.expand?.lead_id?.nome ||
                       'Não identificado'
+                    const isRascunho = quote.status === 'Rascunho'
                     const isVisualizado = quote.status === 'Visualizado'
                     const isEsfriado = quote.status === 'Esfriou'
-                    const isPendente =
-                      quote.status === 'Rascunho' ||
-                      quote.status === 'Enviado' ||
-                      quote.status === 'Visualizado'
+                    const isPendente = quote.status === 'Enviado' || quote.status === 'Visualizado'
                     const valorFormatado = (quoteValues[quote.id] || 0).toLocaleString('pt-BR', {
                       style: 'currency',
                       currency: 'BRL',
@@ -394,11 +459,13 @@ export default function Quotes() {
                           'cursor-pointer transition-colors duration-150',
                           isEsfriado
                             ? 'bg-slate-50/70 text-slate-600'
-                            : prazo
-                              ? prazo.bgHighlightClass
-                              : isVisualizado
-                                ? 'bg-[#FFFDF7]'
-                                : '',
+                            : isRascunho
+                              ? 'bg-amber-50/30'
+                              : prazo
+                                ? prazo.bgHighlightClass
+                                : isVisualizado
+                                  ? 'bg-[#FFFDF7]'
+                                  : '',
                           'hover:bg-[#FAF8F5]',
                         )}
                       >
@@ -471,6 +538,20 @@ export default function Quotes() {
                               </Button>
                             )}
 
+                            {/* Ação Enviar disponível em Rascunhos */}
+                            {isRascunho && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={(e) => handleMarcarEnviado(quote.id, e)}
+                                className="h-7 text-xs border-[#2B5F8A] text-[#2B5F8A] hover:bg-[#F0F5FA]"
+                                title="Marcar como Enviado para ativar follow-up"
+                              >
+                                <Send className="w-3 h-3 mr-1" />
+                                Enviar
+                              </Button>
+                            )}
+
                             {/* Ação Esfriar disponível em orçamentos pendentes */}
                             {isPendente && (
                               <Button
@@ -509,12 +590,10 @@ export default function Quotes() {
                   quote.expand?.contact_id?.nome ||
                   quote.expand?.lead_id?.nome ||
                   'Não identificado'
+                const isRascunho = quote.status === 'Rascunho'
                 const isVisualizado = quote.status === 'Visualizado'
                 const isEsfriado = quote.status === 'Esfriou'
-                const isPendente =
-                  quote.status === 'Rascunho' ||
-                  quote.status === 'Enviado' ||
-                  quote.status === 'Visualizado'
+                const isPendente = quote.status === 'Enviado' || quote.status === 'Visualizado'
                 const valorFormatado = (quoteValues[quote.id] || 0).toLocaleString('pt-BR', {
                   style: 'currency',
                   currency: 'BRL',
@@ -538,11 +617,13 @@ export default function Quotes() {
                       'p-3.5 cursor-pointer space-y-2',
                       isEsfriado
                         ? 'bg-slate-50'
-                        : prazo
-                          ? prazo.bgHighlightClass
-                          : isVisualizado
-                            ? 'bg-[#FFFDF7]'
-                            : '',
+                        : isRascunho
+                          ? 'bg-amber-50/30'
+                          : prazo
+                            ? prazo.bgHighlightClass
+                            : isVisualizado
+                              ? 'bg-[#FFFDF7]'
+                              : '',
                       prazo ? prazo.cardBorderClass : '',
                       'hover:bg-[#FAF8F5]',
                     )}
@@ -589,7 +670,17 @@ export default function Quotes() {
                         PDF da Proposta
                       </Button>
 
-                      {isEsfriado ? (
+                      {isRascunho ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={(e) => handleMarcarEnviado(quote.id, e)}
+                          className="h-7 text-xs border-[#2B5F8A] text-[#2B5F8A]"
+                        >
+                          <Send className="w-3 h-3 mr-1" />
+                          Marcar Enviado
+                        </Button>
+                      ) : isEsfriado ? (
                         <Button
                           variant="outline"
                           size="sm"
