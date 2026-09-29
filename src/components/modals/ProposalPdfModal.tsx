@@ -187,13 +187,13 @@ export function ProposalPdfModal({
               {/* Header Empresa */}
               <div className="border-b border-[#1E1B16] pb-3 flex flex-col sm:flex-row justify-between items-start gap-4">
                 <div className="flex items-start gap-3">
-                  {companySettings.logo ? (
+                  {companySettings?.logo ? (
                     <img
                       src={
                         companySettings.logo.startsWith('http') ||
                         companySettings.logo.startsWith('data:')
                           ? companySettings.logo
-                          : `https://crm-editora-e-grafica-5e899.shrd00.internal.goskip.dev/api/files/company_settings/${companySettings.id}/${companySettings.logo}`
+                          : `https://crm-editora-e-grafica-5e899.shrd00.internal.goskip.dev/api/files/company_settings/${companySettings.id || ''}/${companySettings.logo}`
                       }
                       alt="Logo"
                       className="max-h-12 max-w-[150px] object-contain"

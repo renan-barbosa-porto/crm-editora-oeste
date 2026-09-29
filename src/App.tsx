@@ -6,6 +6,7 @@ import { AuthProvider } from '@/contexts/AuthContext'
 import { SettingsProvider } from '@/contexts/SettingsContext'
 import { ProtectedRoute } from '@/components/ProtectedRoute'
 import Layout from '@/components/Layout'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
 
 import Index from '@/pages/Index'
 import Leads from '@/pages/Leads'
@@ -40,7 +41,14 @@ const App = () => (
                 <Route path="/contatos" element={<Contacts />} />
                 <Route path="/contatos/:id" element={<ContactDetail />} />
                 <Route path="/orcamentos" element={<Quotes />} />
-                <Route path="/orcamentos/:id" element={<QuoteDetail />} />
+                <Route
+                  path="/orcamentos/:id"
+                  element={
+                    <ErrorBoundary>
+                      <QuoteDetail />
+                    </ErrorBoundary>
+                  }
+                />
                 <Route path="/configuracoes" element={<Settings />} />
               </Route>
             </Route>

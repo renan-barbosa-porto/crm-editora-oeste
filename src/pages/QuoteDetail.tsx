@@ -106,7 +106,7 @@ export default function QuoteDetail() {
   const [especificacoesGrafica, setEspecificacoesGrafica] = useState(ESPECIFICACOES_GRAFICAS_PADRAO)
   const [tiragens, setTiragens] = useState<GraficaTiragemRow[]>(TIRAGENS_PADRAO)
   const [condicoesGerais, setCondicoesGerais] = useState(
-    companySettings.texto_condicoes_padrao || CONDICOES_PADRAO_EDITORA_OESTE,
+    companySettings?.texto_condicoes_padrao || CONDICOES_PADRAO_EDITORA_OESTE,
   )
   const [isSavingGrafica, setIsSavingGrafica] = useState(false)
 
@@ -141,7 +141,7 @@ export default function QuoteDetail() {
       setTiragens(parseTiragens(q))
       setCondicoesGerais(
         q.condicoes_gerais ||
-          companySettings.texto_condicoes_padrao ||
+          companySettings?.texto_condicoes_padrao ||
           CONDICOES_PADRAO_EDITORA_OESTE,
       )
 

@@ -80,7 +80,7 @@ export function NewQuoteModal({
 
   // Condições Gerais Editáveis
   const [condicoesGerais, setCondicoesGerais] = useState(
-    companySettings.texto_condicoes_padrao || CONDICOES_PADRAO_EDITORA_OESTE,
+    companySettings?.texto_condicoes_padrao || CONDICOES_PADRAO_EDITORA_OESTE,
   )
 
   // Autocomplete e memória
@@ -128,11 +128,11 @@ export function NewQuoteModal({
       searchItemSugestoes('')
         .then(setSugestoesCache)
         .catch(() => {})
-      if (companySettings.texto_condicoes_padrao) {
+      if (companySettings?.texto_condicoes_padrao) {
         setCondicoesGerais(companySettings.texto_condicoes_padrao)
       }
     }
-  }, [open, initialLeadId, companySettings.texto_condicoes_padrao])
+  }, [open, initialLeadId, companySettings?.texto_condicoes_padrao])
 
   const handleAddItem = () => {
     setItems((prev) => [...prev, { descricao: '', quantidade: 1, valor_unitario: 0 }])
@@ -312,7 +312,7 @@ export function NewQuoteModal({
           <DialogTitle className="font-serif text-xl text-[#1E1B16] flex items-center gap-2">
             <span>Novo Orçamento Comercial</span>
             <span className="text-xs px-2 py-0.5 rounded bg-[#FAF8F5] text-[#8A8178] border border-[#E5DFD6]">
-              {companySettings.nome_comercial || 'Editora Oeste'}
+              {companySettings?.nome_comercial || 'Editora Oeste'}
             </span>
           </DialogTitle>
           <DialogDescription className="text-xs text-[#8A8178]">

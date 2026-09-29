@@ -621,7 +621,7 @@ export default function Index() {
           }
           condicoes={
             selectedQuoteForPdf.condicoes_gerais ||
-            companySettings.texto_condicoes_padrao ||
+            companySettings?.texto_condicoes_padrao ||
             CONDICOES_PADRAO_EDITORA_OESTE
           }
           descontoPercentual={selectedQuoteForPdf.desconto_percentual || 0}

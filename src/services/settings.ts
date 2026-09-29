@@ -51,7 +51,22 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 3, initialDelay = 40
     } catch (err: any) {
       attempt++
       const status = err?.status ?? err?.response?.status
-      const isTransient = status === 429 || status === 503 || status === 502 || status === 0
+      const msg = String(err?.message || '').toLowerCase()
+      const origMsg = String(err?.originalError?.message || '').toLowerCase()
+      const isTransient =
+        status === 429 ||
+        status === 503 ||
+        status === 502 ||
+        status === 504 ||
+        status === 0 ||
+        err?.isAbort === true ||
+        msg.includes('failed to fetch') ||
+        msg.includes('networkerror') ||
+        msg.includes('network error') ||
+        msg.includes('load failed') ||
+        origMsg.includes('failed to fetch') ||
+        origMsg.includes('networkerror') ||
+        origMsg.includes('network error')
       if (isTransient && attempt <= retries) {
         await new Promise((resolve) => setTimeout(resolve, delay))
         delay *= 2

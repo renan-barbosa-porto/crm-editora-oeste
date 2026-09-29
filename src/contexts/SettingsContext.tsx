@@ -47,9 +47,10 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
   const reloadSettings = useCallback(async () => {
     try {
       const data = await getCompanySettings()
-      setSettings(data)
+      setSettings(data || fallbackRecord)
     } catch (e) {
-      console.error('Falha ao recarregar configurações da empresa:', e)
+      console.warn('Falha ao recarregar configurações da empresa, mantendo defaults:', e)
+      setSettings(fallbackRecord)
     } finally {
       setLoading(false)
     }
