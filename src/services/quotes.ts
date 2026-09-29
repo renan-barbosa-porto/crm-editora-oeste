@@ -66,6 +66,7 @@ function isTransientNetworkError(err: any): boolean {
   }
 
   const msg = String(err?.message || '').toLowerCase()
+  const originalMsg = String(err?.originalError?.message || '').toLowerCase()
   if (
     msg.includes('failed to fetch') ||
     msg.includes('networkerror') ||
@@ -75,7 +76,10 @@ function isTransientNetworkError(err: any): boolean {
     msg.includes('etimedout') ||
     msg.includes('timeout') ||
     msg.includes('temporary unavailable') ||
-    msg.includes('temporarily unavailable')
+    msg.includes('temporarily unavailable') ||
+    originalMsg.includes('failed to fetch') ||
+    originalMsg.includes('networkerror') ||
+    originalMsg.includes('network error')
   ) {
     return true
   }
@@ -151,28 +155,42 @@ export async function createQuote(
 
   // 1. Verificação prévia de idempotência: se já existir com a mesma referência, reutilizar
   if (numeroRef) {
-    const existing = await findQuoteByNumeroReferencia(numeroRef)
-    if (existing) {
-      return existing
+    try {
+      const existing = await findQuoteByNumeroReferencia(numeroRef)
+      if (existing) {
+        return existing
+      }
+    } catch {
+      // Se a checagem falhar por instabilidade, prossegue para tentativa de criação
     }
   }
 
   // 2. Criação do registro de quote com retry tolerante a oscilações de rede
   let quote: Quote
   try {
-    quote = await withRetry(() =>
-      pb.collection('quotes').create<Quote>(data, {
-        expand: 'lead_id,contact_id',
-        requestKey: null,
-      }),
+    quote = await withRetry(
+      () =>
+        pb.collection('quotes').create<Quote>(data, {
+          expand: 'lead_id,contact_id',
+          requestKey: null,
+        }),
+      4,
+      500,
     )
   } catch (createErr: any) {
-    // Se falhou no nível de rede / ambiguidade, pode ser que o backend tenha
-    // processado a requisição antes da perda de conexão. Checamos novamente por número de referência:
-    if (numeroRef && isTransientNetworkError(createErr)) {
-      const existingAfterErr = await findQuoteByNumeroReferencia(numeroRef)
-      if (existingAfterErr) {
-        return existingAfterErr
+    // Se falhou no nível de rede / ambiguidade ("Failed to fetch", timeout, gateway 502/503),
+    // é comum que a requisição tenha sido gravada no servidor antes da conexão cair.
+    // Fazemos checagem de reconciliação para não acusar erro falso positivo se o registro já existir.
+    if (numeroRef) {
+      // Pequena pausa para o banco estabilizar eventual escrita
+      await new Promise((res) => setTimeout(res, 600))
+      try {
+        const existingAfterErr = await findQuoteByNumeroReferencia(numeroRef)
+        if (existingAfterErr) {
+          return existingAfterErr
+        }
+      } catch {
+        // Se a busca falhar, lança o erro original
       }
     }
     throw createErr

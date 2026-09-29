@@ -230,28 +230,34 @@ export function NewQuoteModal({
     try {
       const selectedLead = leads.find((l) => l.id === selectedLeadId)
 
+      const payloadQuote: Partial<import('@/types/crm').Quote> = {
+        titulo: titulo.trim(),
+        numero_referencia: numeroReferencia.trim() || undefined,
+        inclui_editorial: incluiEditorial,
+        tiragem_valorizacao: tiragemValorizacao,
+        lead_id: selectedLeadId,
+        contact_id: selectedLead?.contact_id || undefined,
+        status,
+        desconto_percentual: Number(descontoPercentual) || 0,
+        data_envio: dataEnvio ? `${dataEnvio} 12:00:00` : undefined,
+        grafica_especificacoes: especificacoesGrafica.trim() || undefined,
+        grafica_tiragens: tiragens,
+        condicoes_gerais: condicoesGerais.trim() || undefined,
+      }
+
       const quote = await createQuote(
-        {
-          titulo: titulo.trim(),
-          numero_referencia: numeroReferencia.trim() || undefined,
-          inclui_editorial: incluiEditorial,
-          tiragem_valorizacao: tiragemValorizacao,
-          lead_id: selectedLeadId,
-          contact_id: selectedLead?.contact_id || undefined,
-          status,
-          desconto_percentual: Number(descontoPercentual) || 0,
-          data_envio: dataEnvio ? `${dataEnvio} 12:00:00` : undefined,
-          grafica_especificacoes: especificacoesGrafica.trim() || undefined,
-          grafica_tiragens: tiragens,
-          condicoes_gerais: condicoesGerais.trim() || undefined,
-        },
+        payloadQuote,
         items.filter((it) => it.descricao.trim() !== '') as Partial<QuoteItem>[],
       )
 
-      // Guardar na memória do catálogo todos os itens digitados pelo usuário
+      // Guardar na memória do catálogo de forma silenciosa e resiliente
       for (const it of items) {
         if (it.descricao && it.descricao.trim()) {
-          salvarItemNaMemoriaSeNovo(it.descricao, it.valor_unitario)
+          try {
+            salvarItemNaMemoriaSeNovo(it.descricao, it.valor_unitario)
+          } catch {
+            // falha em salvar memória não impede o sucesso do orçamento
+          }
         }
       }
 
@@ -272,15 +278,21 @@ export function NewQuoteModal({
     } catch (error: any) {
       console.error('[NewQuoteModal] Erro ao salvar orçamento:', error)
 
-      // Mensagem amigável com instrução explícita de que os dados NÃO foram perdidos
-      const friendlyMsg =
-        'Não foi possível conectar ao servidor. Seu orçamento NÃO foi perdido — clique em Tentar novamente.'
+      // Se mesmo com todos os retries e reconciliação falhar por instabilidade de rede / 503:
+      const statusErr = error?.status ?? error?.response?.status
+      const is503 = statusErr === 503 || String(error?.message || '').includes('503')
+      const friendlyMsg = is503
+        ? 'O servidor do banco está temporariamente indisponível (503). Seus dados estão salvos neste formulário — aguarde alguns instantes e clique em Tentar novamente.'
+        : 'Não foi possível conectar ao servidor (Failed to fetch). Seu orçamento NÃO foi perdido — clique em Tentar novamente.'
 
       setNetworkErrorMsg(friendlyMsg)
 
       toast({
-        title: 'Não foi possível conectar ao servidor',
-        description: 'Seus dados foram preservados. Clique em "Tentar novamente" abaixo.',
+        title: is503
+          ? 'Servidor temporariamente indisponível'
+          : 'Oscilação de conexão com o servidor',
+        description:
+          'Seus dados foram preservados com segurança. Clique em "Tentar novamente" abaixo.',
         variant: 'destructive',
       })
     } finally {
