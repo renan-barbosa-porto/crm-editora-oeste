@@ -34,7 +34,7 @@ import { getQuotes } from '@/services/quotes'
 import { getUltimoNumeroPropostaUsado } from '@/lib/quote-utils'
 import { Switch } from '@/components/ui/switch'
 import type { Lead, QuoteItem, QuoteStatus, GraficaTiragemRow } from '@/types/crm'
-import { Plus, Trash2, Sparkles, BookOpen } from 'lucide-react'
+import { Plus, Trash2, Sparkles, BookOpen, AlertTriangle, RefreshCw } from 'lucide-react'
 
 interface NewQuoteModalProps {
   open: boolean
@@ -89,32 +89,45 @@ export function NewQuoteModal({
 
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
+  const [networkErrorMsg, setNetworkErrorMsg] = useState<string | null>(null)
 
   useEffect(() => {
     if (open) {
-      getLeads().then((list) => {
-        setLeads(list)
-        if (initialLeadId) {
-          setSelectedLeadId(initialLeadId)
-          const found = list.find((l) => l.id === initialLeadId)
-          if (found && !titulo) {
-            setTitulo(`Orçamento — ${found.nome}`)
+      getLeads()
+        .then((list) => {
+          setLeads(list)
+          if (initialLeadId) {
+            setSelectedLeadId(initialLeadId)
+            const found = list.find((l) => l.id === initialLeadId)
+            if (found && !titulo) {
+              setTitulo(`Orçamento — ${found.nome}`)
+            }
           }
-        }
-      })
+        })
+        .catch(() => {
+          // Degradação suave em caso de falha de conexão inicial
+        })
+
       // Buscar orçamentos existentes para calcular último número usado (apenas lembrete!)
-      getQuotes().then((quotes) => {
-        const ultimo = getUltimoNumeroPropostaUsado(quotes)
-        setUltimoNumeroUsado(ultimo)
-      })
+      getQuotes()
+        .then((quotes) => {
+          const ultimo = getUltimoNumeroPropostaUsado(quotes)
+          setUltimoNumeroUsado(ultimo)
+        })
+        .catch(() => {})
+
       // Começa vazio sem preenchimento automático
       setNumeroReferencia('')
       setIncluiEditorial(true)
       setTiragemValorizacao('50')
       setItems([])
       setErrors({})
+      setNetworkErrorMsg(null)
+
       // Pré-carregar catálogo inicial para sugestões rápidas
-      searchItemSugestoes('').then(setSugestoesCache)
+      searchItemSugestoes('')
+        .then(setSugestoesCache)
+        .catch(() => {})
       if (companySettings.texto_condicoes_padrao) {
         setCondicoesGerais(companySettings.texto_condicoes_padrao)
       }
@@ -208,11 +221,12 @@ export function NewQuoteModal({
     return Object.keys(errs).length === 0
   }
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
+  const submitQuote = async () => {
     if (!validate()) return
 
     setIsSubmitting(true)
+    setNetworkErrorMsg(null)
+
     try {
       const selectedLead = leads.find((l) => l.id === selectedLeadId)
 
@@ -246,23 +260,37 @@ export function NewQuoteModal({
         description: `Orçamento "${titulo}" foi gerado em status ${status}.`,
       })
 
-      // Reset
+      // Sucesso: limpar estado e fechar modal
       setTitulo('')
       setSelectedLeadId('')
       setDescontoPercentual(0)
       setDataEnvio(new Date().toISOString().slice(0, 10))
       setItems([])
+      setNetworkErrorMsg(null)
       onOpenChange(false)
       if (onSuccess) onSuccess(quote.id)
     } catch (error: any) {
+      console.error('[NewQuoteModal] Erro ao salvar orçamento:', error)
+
+      // Mensagem amigável com instrução explícita de que os dados NÃO foram perdidos
+      const friendlyMsg =
+        'Não foi possível conectar ao servidor. Seu orçamento NÃO foi perdido — clique em Tentar novamente.'
+
+      setNetworkErrorMsg(friendlyMsg)
+
       toast({
-        title: 'Erro ao gerar orçamento',
-        description: error?.message || 'Verifique as informações e tente novamente.',
+        title: 'Não foi possível conectar ao servidor',
+        description: 'Seus dados foram preservados. Clique em "Tentar novamente" abaixo.',
         variant: 'destructive',
       })
     } finally {
       setIsSubmitting(false)
     }
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    await submitQuote()
   }
 
   return (
@@ -754,6 +782,26 @@ export function NewQuoteModal({
             />
           </div>
 
+          {/* Banner de erro de rede amigável com preservação de dados e Tentar Novamente */}
+          {networkErrorMsg && (
+            <div className="p-3 bg-amber-50 border border-amber-300 rounded-md flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-amber-900">
+              <div className="flex items-start sm:items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5 sm:mt-0" />
+                <span className="leading-snug">{networkErrorMsg}</span>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => submitQuote()}
+                disabled={isSubmitting}
+                className="bg-[#B3541E] hover:bg-[#9A4618] text-white self-start sm:self-auto h-7 px-3 text-xs flex items-center gap-1.5"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isSubmitting ? 'animate-spin' : ''}`} />
+                Tentar novamente
+              </Button>
+            </div>
+          )}
+
           <div className="flex justify-end gap-2 pt-2">
             <Button
               type="button"
@@ -763,13 +811,25 @@ export function NewQuoteModal({
             >
               Cancelar
             </Button>
-            <Button
-              type="submit"
-              disabled={isSubmitting || !titulo.trim() || !selectedLeadId}
-              className="bg-[#B3541E] hover:bg-[#9A4618] text-white"
-            >
-              {isSubmitting ? 'Gerando...' : 'Criar Orçamento'}
-            </Button>
+            {networkErrorMsg ? (
+              <Button
+                type="button"
+                onClick={() => submitQuote()}
+                disabled={isSubmitting || !titulo.trim() || !selectedLeadId}
+                className="bg-[#B3541E] hover:bg-[#9A4618] text-white flex items-center gap-1.5"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isSubmitting ? 'animate-spin' : ''}`} />
+                {isSubmitting ? 'Tentando novamente...' : 'Tentar novamente'}
+              </Button>
+            ) : (
+              <Button
+                type="submit"
+                disabled={isSubmitting || !titulo.trim() || !selectedLeadId}
+                className="bg-[#B3541E] hover:bg-[#9A4618] text-white"
+              >
+                {isSubmitting ? 'Gerando...' : 'Criar Orçamento'}
+              </Button>
+            )}
           </div>
         </form>
       </DialogContent>

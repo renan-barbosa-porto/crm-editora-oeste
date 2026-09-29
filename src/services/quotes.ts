@@ -53,55 +53,50 @@ export async function getQuotesByContactId(contactId: string): Promise<Quote[]> 
   })
 }
 
-export async function createQuote(
-  data: Partial<Quote>,
-  items?: Partial<QuoteItem>[],
-): Promise<Quote> {
-  const quote = await pb.collection('quotes').create<Quote>(data, {
-    expand: 'lead_id,contact_id',
-  })
+/**
+ * Determina se um erro é transitório de rede ou sobrecarga do servidor,
+ * passível de recuperação por retry automático com backoff.
+ */
+function isTransientNetworkError(err: any): boolean {
+  if (!err) return false
 
-  if (items && items.length > 0) {
-    for (const item of items) {
-      if (item.descricao && item.descricao.trim()) {
-        await pb.collection('quote_items').create({
-          quote_id: quote.id,
-          descricao: item.descricao,
-          quantidade: item.quantidade || 1,
-          valor_unitario: item.valor_unitario || 0,
-          desconto_percentual: item.desconto_percentual || 0,
-        })
-      }
-    }
+  const status = err?.status ?? err?.response?.status
+  if (status === 0 || status === 429 || status === 502 || status === 503 || status === 504) {
+    return true
   }
 
-  return quote
-}
+  const msg = String(err?.message || '').toLowerCase()
+  if (
+    msg.includes('failed to fetch') ||
+    msg.includes('networkerror') ||
+    msg.includes('network error') ||
+    msg.includes('load failed') ||
+    msg.includes('econnreset') ||
+    msg.includes('etimedout') ||
+    msg.includes('timeout') ||
+    msg.includes('temporary unavailable') ||
+    msg.includes('temporarily unavailable')
+  ) {
+    return true
+  }
 
-export async function updateQuote(id: string, data: Partial<Quote>): Promise<Quote> {
-  return await pb.collection('quotes').update<Quote>(id, data, {
-    expand: 'lead_id,contact_id',
-  })
-}
+  // PocketBase ClientResponseError com status 0 ou isAbort
+  if (err?.isAbort === true) {
+    return true
+  }
 
-export async function updateQuoteStatus(id: string, status: QuoteStatus): Promise<Quote> {
-  return await pb.collection('quotes').update<Quote>(
-    id,
-    { status },
-    {
-      expand: 'lead_id,contact_id',
-    },
-  )
-}
-
-export async function deleteQuote(id: string): Promise<boolean> {
-  return await pb.collection('quotes').delete(id)
+  return false
 }
 
 /**
- * Helper para executar chamadas assíncronas com retry e backoff exponencial em caso de erro 429
+ * Helper para executar chamadas assíncronas com retry e backoff exponencial
+ * tolerando oscilações de rede ("Failed to fetch", status 0, 429, 502, 503, 504).
  */
-async function withRetry<T>(fn: () => Promise<T>, retries = 3, initialDelay = 400): Promise<T> {
+export async function withRetry<T>(
+  fn: () => Promise<T>,
+  retries = 3,
+  initialDelay = 400,
+): Promise<T> {
   let attempt = 0
   let delay = initialDelay
 
@@ -110,8 +105,7 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 3, initialDelay = 40
       return await fn()
     } catch (err: any) {
       attempt++
-      const isRateLimit = err?.status === 429 || err?.response?.status === 429
-      if (isRateLimit && attempt <= retries) {
+      if (isTransientNetworkError(err) && attempt <= retries) {
         await new Promise((resolve) => setTimeout(resolve, delay))
         delay *= 2
         continue
@@ -119,6 +113,132 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 3, initialDelay = 40
       throw err
     }
   }
+}
+
+/**
+ * Busca orçamento por numero_referencia de forma segura para evitar duplicações
+ * em caso de ambiguidade pós-falha de rede.
+ */
+export async function findQuoteByNumeroReferencia(numeroReferencia: string): Promise<Quote | null> {
+  const cleanRef = (numeroReferencia || '').trim()
+  if (!cleanRef) return null
+
+  try {
+    // Sanitizar contra quebra de filtro PocketBase
+    const safeRef = cleanRef.replace(/['"\\]/g, '')
+    const list = await withRetry(
+      () =>
+        pb.collection('quotes').getList<Quote>(1, 1, {
+          filter: `numero_referencia = '${safeRef}'`,
+          expand: 'lead_id,contact_id',
+          requestKey: null,
+        }),
+      2,
+      300,
+    )
+    return list.items[0] || null
+  } catch (err) {
+    console.warn('[findQuoteByNumeroReferencia] Erro ao buscar referência existente:', err)
+    return null
+  }
+}
+
+export async function createQuote(
+  data: Partial<Quote>,
+  items?: Partial<QuoteItem>[],
+): Promise<Quote> {
+  const numeroRef = (data.numero_referencia || '').trim()
+
+  // 1. Verificação prévia de idempotência: se já existir com a mesma referência, reutilizar
+  if (numeroRef) {
+    const existing = await findQuoteByNumeroReferencia(numeroRef)
+    if (existing) {
+      return existing
+    }
+  }
+
+  // 2. Criação do registro de quote com retry tolerante a oscilações de rede
+  let quote: Quote
+  try {
+    quote = await withRetry(() =>
+      pb.collection('quotes').create<Quote>(data, {
+        expand: 'lead_id,contact_id',
+        requestKey: null,
+      }),
+    )
+  } catch (createErr: any) {
+    // Se falhou no nível de rede / ambiguidade, pode ser que o backend tenha
+    // processado a requisição antes da perda de conexão. Checamos novamente por número de referência:
+    if (numeroRef && isTransientNetworkError(createErr)) {
+      const existingAfterErr = await findQuoteByNumeroReferencia(numeroRef)
+      if (existingAfterErr) {
+        return existingAfterErr
+      }
+    }
+    throw createErr
+  }
+
+  // 3. Criação dos itens do orçamento (quote_items)
+  if (items && items.length > 0) {
+    // Verificar se já não existem itens cadastrados (ex.: em caso de reexecução parcial)
+    let existingItemCount = 0
+    try {
+      const existingItems = await pb.collection('quote_items').getList(1, 1, {
+        filter: `quote_id = '${quote.id}'`,
+        requestKey: null,
+      })
+      existingItemCount = existingItems.totalItems
+    } catch {
+      // Se falhar a listagem, segue criando
+    }
+
+    if (existingItemCount === 0) {
+      for (const item of items) {
+        if (item.descricao && item.descricao.trim()) {
+          await withRetry(() =>
+            pb.collection('quote_items').create(
+              {
+                quote_id: quote.id,
+                descricao: item.descricao,
+                quantidade: item.quantidade || 1,
+                valor_unitario: item.valor_unitario || 0,
+                desconto_percentual: item.desconto_percentual || 0,
+              },
+              { requestKey: null },
+            ),
+          )
+        }
+      }
+    }
+  }
+
+  return quote
+}
+
+export async function updateQuote(id: string, data: Partial<Quote>): Promise<Quote> {
+  return await withRetry(() =>
+    pb.collection('quotes').update<Quote>(id, data, {
+      expand: 'lead_id,contact_id',
+      requestKey: null,
+    }),
+  )
+}
+
+export async function updateQuoteStatus(id: string, status: QuoteStatus): Promise<Quote> {
+  return await withRetry(() =>
+    pb.collection('quotes').update<Quote>(
+      id,
+      { status },
+      {
+        expand: 'lead_id,contact_id',
+        requestKey: null,
+      },
+    ),
+  )
+}
+
+export async function deleteQuote(id: string): Promise<boolean> {
+  return await withRetry(() => pb.collection('quotes').delete(id))
 }
 
 // Quote Items
