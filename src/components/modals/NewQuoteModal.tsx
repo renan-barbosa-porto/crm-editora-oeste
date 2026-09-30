@@ -99,7 +99,7 @@ export function NewQuoteModal({
           if (initialLeadId) {
             setSelectedLeadId(initialLeadId)
             const found = list.find((l) => l.id === initialLeadId)
-            if (found && !titulo) {
+            if (found) {
               setTitulo(`Orçamento — ${found.nome}`)
             }
           }
@@ -116,7 +116,11 @@ export function NewQuoteModal({
         })
         .catch(() => {})
 
-      // Começa vazio sem preenchimento automático
+      // Se não havia initialLeadId, reseta os campos
+      if (!initialLeadId) {
+        setSelectedLeadId('')
+        setTitulo('')
+      }
       setNumeroReferencia('')
       setIncluiEditorial(true)
       setTiragemValorizacao('50')
@@ -283,16 +287,15 @@ export function NewQuoteModal({
       const is503 = statusErr === 503 || String(error?.message || '').includes('503')
       const friendlyMsg = is503
         ? 'O servidor do banco está temporariamente indisponível (503). Seus dados estão salvos neste formulário — aguarde alguns instantes e clique em Tentar novamente.'
-        : 'Não foi possível conectar ao servidor (Failed to fetch). Seu orçamento NÃO foi perdido — clique em Tentar novamente.'
+        : error?.message ||
+          'Não foi possível gravar o orçamento no servidor. Seu orçamento NÃO foi perdido — clique em Tentar novamente.'
 
       setNetworkErrorMsg(friendlyMsg)
 
       toast({
-        title: is503
-          ? 'Servidor temporariamente indisponível'
-          : 'Oscilação de conexão com o servidor',
+        title: is503 ? 'Servidor temporariamente indisponível' : 'Erro ao salvar orçamento',
         description:
-          'Seus dados foram preservados com segurança. Clique em "Tentar novamente" abaixo.',
+          'Seu orçamento NÃO foi perdido — os dados foram preservados. Clique em "Tentar novamente".',
         variant: 'destructive',
       })
     } finally {

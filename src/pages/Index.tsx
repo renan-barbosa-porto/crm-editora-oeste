@@ -517,6 +517,12 @@ export default function Index() {
                         </Badge>
                       </div>
                       <p className="font-semibold text-[#1E1B16] truncate mt-0.5">{q.titulo}</p>
+                      {q.expand?.lead_id?.nome &&
+                        !q.titulo?.toLowerCase().includes(q.expand.lead_id.nome.toLowerCase()) && (
+                          <p className="text-[10px] text-[#8A8178] truncate">
+                            Lead: {q.expand.lead_id.nome}
+                          </p>
+                        )}
                       <div className="flex items-center justify-between mt-1 text-[11px] text-[#8A8178]">
                         <span className="truncate max-w-[120px]">{clienteNome}</span>
                         <span className="font-mono font-bold text-[#B3541E]">{valor}</span>

@@ -20,39 +20,31 @@ export function extractFieldErrors(error: unknown): FieldErrors {
   return errors
 }
 
-export function isNetworkError(error: unknown): boolean {
-  if (!error) return false
-  const err = error as any
-  const status = err?.status ?? err?.response?.status
-  if (status === 0 || status === 429 || status === 502 || status === 503 || status === 504) {
-    return true
-  }
-  const msg = String(err?.message || '').toLowerCase()
-  const originalMsg = String(err?.originalError?.message || '').toLowerCase()
-  if (
-    msg.includes('failed to fetch') ||
-    msg.includes('networkerror') ||
-    msg.includes('network error') ||
-    msg.includes('load failed') ||
-    msg.includes('econnreset') ||
-    msg.includes('etimedout') ||
-    msg.includes('timeout') ||
-    originalMsg.includes('failed to fetch') ||
-    originalMsg.includes('networkerror') ||
-    originalMsg.includes('network error')
-  ) {
-    return true
-  }
-  if (err?.isAbort === true) {
-    return true
-  }
-  return false
-}
-
 export function getErrorMessage(error: unknown): string {
   if (!(error instanceof ClientResponseError)) {
     return error instanceof Error ? error.message : 'An unexpected error occurred.'
   }
   const msgs = Object.values(extractFieldErrors(error))
   return msgs.length > 0 ? msgs.join(' ') : error.message || 'An unexpected error occurred.'
+}
+
+export function isNetworkError(error: unknown): boolean {
+  if (!error) return false
+  if (error instanceof ClientResponseError) {
+    if (
+      error.status === 0 ||
+      error.status === 503 ||
+      error.status === 502 ||
+      error.status === 504
+    ) {
+      return true
+    }
+  }
+  const msg = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase()
+  return (
+    msg.includes('network') ||
+    msg.includes('failed to fetch') ||
+    msg.includes('connection') ||
+    msg.includes('timeout')
+  )
 }

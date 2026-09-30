@@ -43,6 +43,8 @@ export async function getQuotesByLeadId(leadId: string): Promise<Quote[]> {
   return await pb.collection('quotes').getFullList<Quote>({
     filter: `lead_id = '${leadId}'`,
     sort: '-created',
+    expand: 'lead_id,contact_id',
+    requestKey: null,
   })
 }
 
@@ -50,6 +52,8 @@ export async function getQuotesByContactId(contactId: string): Promise<Quote[]> 
   return await pb.collection('quotes').getFullList<Quote>({
     filter: `contact_id = '${contactId}'`,
     sort: '-created',
+    expand: 'lead_id,contact_id',
+    requestKey: null,
   })
 }
 
@@ -120,27 +124,55 @@ export async function withRetry<T>(
 }
 
 /**
- * Busca orçamento por numero_referencia de forma segura para evitar duplicações
- * em caso de ambiguidade pós-falha de rede.
+ * Busca orçamento por numero_referencia de forma segura.
+ * Quando fornecido lead_id e/ou título, filtra com precisão para não confundir propostas
+ * distintas que compartilham o mesmo número de referência intencionalmente (ex: tiragens ou propostas diferentes para o mesmo cliente).
  */
-export async function findQuoteByNumeroReferencia(numeroReferencia: string): Promise<Quote | null> {
+export async function findQuoteByNumeroReferencia(
+  numeroReferencia: string,
+  criteria?: { leadId?: string; titulo?: string; createdAfterMs?: number },
+): Promise<Quote | null> {
   const cleanRef = (numeroReferencia || '').trim()
   if (!cleanRef) return null
 
   try {
     // Sanitizar contra quebra de filtro PocketBase
     const safeRef = cleanRef.replace(/['"\\]/g, '')
+    const filterParts = [`numero_referencia = '${safeRef}'`]
+    if (criteria?.leadId) {
+      const safeLead = criteria.leadId.replace(/['"\\]/g, '')
+      filterParts.push(`lead_id = '${safeLead}'`)
+    }
+
     const list = await withRetry(
       () =>
-        pb.collection('quotes').getList<Quote>(1, 1, {
-          filter: `numero_referencia = '${safeRef}'`,
+        pb.collection('quotes').getList<Quote>(1, 10, {
+          filter: filterParts.join(' && '),
+          sort: '-created',
           expand: 'lead_id,contact_id',
           requestKey: null,
         }),
       2,
       300,
     )
-    return list.items[0] || null
+
+    if (list.items.length === 0) return null
+
+    // Se houver filtro de título ou janela de tempo recente, refina a correspondência
+    const candidates = list.items.filter((q) => {
+      if (criteria?.titulo && criteria.titulo.trim()) {
+        const t1 = q.titulo.trim().toLowerCase()
+        const t2 = criteria.titulo.trim().toLowerCase()
+        if (t1 !== t2) return false
+      }
+      if (criteria?.createdAfterMs) {
+        const createdMs = q.created ? new Date(q.created).getTime() : 0
+        if (createdMs < criteria.createdAfterMs) return false
+      }
+      return true
+    })
+
+    return candidates[0] || null
   } catch (err) {
     console.warn('[findQuoteByNumeroReferencia] Erro ao buscar referência existente:', err)
     return null
@@ -152,20 +184,11 @@ export async function createQuote(
   items?: Partial<QuoteItem>[],
 ): Promise<Quote> {
   const numeroRef = (data.numero_referencia || '').trim()
+  const nowMs = Date.now()
 
-  // 1. Verificação prévia de idempotência: se já existir com a mesma referência, reutilizar
-  if (numeroRef) {
-    try {
-      const existing = await findQuoteByNumeroReferencia(numeroRef)
-      if (existing) {
-        return existing
-      }
-    } catch {
-      // Se a checagem falhar por instabilidade, prossegue para tentativa de criação
-    }
-  }
-
-  // 2. Criação do registro de quote com retry tolerante a oscilações de rede
+  // 1. Criação do registro de quote com retry tolerante a oscilações de rede.
+  // ATENÇÃO: NUNCA reutilizar preventivamente um orçamento existente antes da tentativa de salvar,
+  // pois o usuário pode criar legitimamente propostas diferentes com o mesmo número de referência!
   let quote: Quote
   try {
     quote = await withRetry(
@@ -180,25 +203,55 @@ export async function createQuote(
   } catch (createErr: any) {
     // Se falhou no nível de rede / ambiguidade ("Failed to fetch", timeout, gateway 502/503),
     // é comum que a requisição tenha sido gravada no servidor antes da conexão cair.
-    // Fazemos checagem de reconciliação para não acusar erro falso positivo se o registro já existir.
-    if (numeroRef) {
-      // Pequena pausa para o banco estabilizar eventual escrita
+    // SOMENTE reconciliamos se encontrarmos uma proposta criada NESTE MOMENTO (últimos 30 segundos)
+    // com exatamente o MESMO lead e MESMO título.
+    if (numeroRef && isTransientNetworkError(createErr)) {
       await new Promise((res) => setTimeout(res, 600))
       try {
-        const existingAfterErr = await findQuoteByNumeroReferencia(numeroRef)
+        const existingAfterErr = await findQuoteByNumeroReferencia(numeroRef, {
+          leadId: data.lead_id,
+          titulo: data.titulo,
+          createdAfterMs: nowMs - 30_000,
+        })
         if (existingAfterErr) {
-          return existingAfterErr
+          quote = existingAfterErr
+        } else {
+          throw createErr
         }
       } catch {
-        // Se a busca falhar, lança o erro original
+        throw createErr
       }
+    } else {
+      throw createErr
     }
-    throw createErr
+  }
+
+  // 2. Verificação pós-salvamento OBRIGATÓRIA no banco:
+  // Confirma que o registro realmente existe antes de prosseguir ou reportar sucesso.
+  try {
+    const verified = await withRetry(
+      () =>
+        pb.collection('quotes').getOne<Quote>(quote.id, {
+          expand: 'lead_id,contact_id',
+          requestKey: null,
+        }),
+      3,
+      400,
+    )
+    if (!verified || !verified.id) {
+      throw new Error('Falha na confirmação de gravação do orçamento no servidor.')
+    }
+    quote = verified
+  } catch (verifyErr: any) {
+    console.error('[createQuote] Erro na verificação pós-salvamento:', verifyErr)
+    throw new Error(
+      verifyErr?.message ||
+        'Não foi possível confirmar a gravação do orçamento no servidor. Verifique a listagem antes de tentar novamente.',
+    )
   }
 
   // 3. Criação dos itens do orçamento (quote_items)
   if (items && items.length > 0) {
-    // Verificar se já não existem itens cadastrados (ex.: em caso de reexecução parcial)
     let existingItemCount = 0
     try {
       const existingItems = await pb.collection('quote_items').getList(1, 1, {
@@ -207,7 +260,7 @@ export async function createQuote(
       })
       existingItemCount = existingItems.totalItems
     } catch {
-      // Se falhar a listagem, segue criando
+      // Se falhar a checagem, tenta salvar
     }
 
     if (existingItemCount === 0) {
@@ -234,12 +287,32 @@ export async function createQuote(
 }
 
 export async function updateQuote(id: string, data: Partial<Quote>): Promise<Quote> {
-  return await withRetry(() =>
+  const updated = await withRetry(() =>
     pb.collection('quotes').update<Quote>(id, data, {
       expand: 'lead_id,contact_id',
       requestKey: null,
     }),
   )
+
+  // Verificação pós-salvamento: confirma no banco que a atualização persistiu
+  try {
+    const verified = await withRetry(
+      () =>
+        pb.collection('quotes').getOne<Quote>(id, {
+          expand: 'lead_id,contact_id',
+          requestKey: null,
+        }),
+      2,
+      300,
+    )
+    return verified || updated
+  } catch (err) {
+    console.warn(
+      '[updateQuote] Verificação pós-atualização falhou, retornando resposta do update:',
+      err,
+    )
+    return updated
+  }
 }
 
 export async function updateQuoteStatus(id: string, status: QuoteStatus): Promise<Quote> {

@@ -239,6 +239,8 @@ export default function Quotes() {
       // Filtro de busca
       if (!term) return true
 
+      const leadNome = (q.expand?.lead_id?.nome || '').toLowerCase()
+      const contactNome = (q.expand?.contact_id?.nome || '').toLowerCase()
       const clienteNome = (
         q.expand?.contact_id?.nome ||
         q.expand?.lead_id?.nome ||
@@ -252,7 +254,9 @@ export default function Quotes() {
         titulo.includes(term) ||
         codigo.includes(term) ||
         ref.includes(term) ||
-        clienteNome.includes(term)
+        clienteNome.includes(term) ||
+        leadNome.includes(term) ||
+        contactNome.includes(term)
       )
     })
 
@@ -721,9 +725,24 @@ function QuoteTableRow({
           )}
         </div>
       </td>
-      <td className="py-3.5 px-4 font-semibold text-[#1E1B16]">{clienteNome}</td>
+      <td className="py-3.5 px-4 font-semibold text-[#1E1B16]">
+        <div>{clienteNome}</div>
+        {quote.expand?.lead_id?.nome &&
+          quote.expand?.contact_id?.nome &&
+          quote.expand.lead_id.nome !== quote.expand.contact_id.nome && (
+            <div className="text-[11px] text-[#8A8178] font-normal truncate">
+              Lead: {quote.expand.lead_id.nome}
+            </div>
+          )}
+      </td>
       <td className="py-3.5 px-4 text-[#1E1B16] font-medium max-w-xs truncate">
-        <span className="block truncate">{quote.titulo || 'Sem título'}</span>
+        <span className="block truncate font-semibold">{quote.titulo || 'Sem título'}</span>
+        {quote.expand?.lead_id?.nome &&
+          !quote.titulo?.toLowerCase().includes(quote.expand.lead_id.nome.toLowerCase()) && (
+            <span className="text-[11px] text-[#8A8178] block truncate">
+              Lead atual: {quote.expand.lead_id.nome}
+            </span>
+          )}
         {prazo && (
           <span className="text-[11px] text-[#8A8178] flex items-center gap-1 mt-0.5">
             {prazo.urgencia === 'urgente' && <AlertTriangle className="w-3 h-3 text-[#B3261E]" />}
@@ -896,6 +915,13 @@ function QuoteMobileCard({
       <p className="font-semibold text-sm text-[#1E1B16] line-clamp-1">
         {quote.titulo || 'Sem título'}
       </p>
+      {quote.expand?.lead_id?.nome &&
+        !quote.titulo?.toLowerCase().includes(quote.expand.lead_id.nome.toLowerCase()) && (
+          <p className="text-[11px] text-[#8A8178] truncate">
+            Lead atual:{' '}
+            <span className="font-medium text-[#1E1B16]">{quote.expand.lead_id.nome}</span>
+          </p>
+        )}
       <div className="flex items-center justify-between text-xs text-[#8A8178] pt-1">
         <span>
           Cliente: <strong className="text-[#1E1B16]">{clienteNome}</strong>

@@ -132,7 +132,34 @@ export default function LeadDetail() {
   }, [id])
 
   useRealtime('quotes', () => {
-    if (id) getQuotesByLeadId(id).then(setQuotes)
+    if (id) {
+      getQuotesByLeadId(id).then(async (quotesData) => {
+        setQuotes(quotesData)
+        const quoteIds = (quotesData || []).map((q) => q.id)
+        if (quoteIds.length > 0) {
+          try {
+            const itemsByQuoteId = await getQuoteItemsByQuoteIds(quoteIds)
+            const valMap: Record<string, number> = {}
+            for (const q of quotesData || []) {
+              try {
+                const items = itemsByQuoteId[q.id] || []
+                const subtotal = items.reduce(
+                  (acc, it) => acc + (it.quantidade || 0) * (it.valor_unitario || 0),
+                  0,
+                )
+                const desc = (subtotal * (q.desconto_percentual || 0)) / 100
+                valMap[q.id] = Math.max(0, subtotal - desc)
+              } catch {
+                valMap[q.id] = 0
+              }
+            }
+            setQuoteValues((prev) => ({ ...prev, ...valMap }))
+          } catch {
+            // falha em atualizar valores não quebra lista
+          }
+        }
+      })
+    }
   })
   useRealtime('leads', () => {
     if (id) getLeadById(id).then(setLead)
@@ -479,6 +506,11 @@ export default function LeadDetail() {
                       <p className="text-sm font-semibold text-[#1E1B16] line-clamp-1">
                         {q.titulo}
                       </p>
+                      {lead?.nome && !q.titulo?.toLowerCase().includes(lead.nome.toLowerCase()) && (
+                        <span className="text-[11px] text-[#8A8178] block truncate">
+                          Lead: {lead.nome}
+                        </span>
+                      )}
                       <div className="flex items-center justify-between mt-2 pt-2 border-t border-[#E5DFD6]/60 text-xs">
                         <span className="text-[#8A8178]">
                           {dataEnvioFmt ? `Enviado em: ${dataEnvioFmt}` : 'Sem data de envio'}
@@ -615,7 +647,9 @@ export default function LeadDetail() {
         onOpenChange={setNewQuoteModalOpen}
         initialLeadId={lead.id}
         onSuccess={() => {
-          if (id) getQuotesByLeadId(id).then(setQuotes)
+          if (id) {
+            loadAll()
+          }
         }}
       />
     </div>
