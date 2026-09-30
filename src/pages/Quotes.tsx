@@ -668,8 +668,10 @@ function QuoteTableRow({
   onEsfriar: (e: React.MouseEvent) => void
   getStatusBadge: (status: string) => React.ReactNode
 }) {
-  const clienteNome =
-    quote.expand?.contact_id?.nome || quote.expand?.lead_id?.nome || 'Não identificado'
+  const leadNome = quote.expand?.lead_id?.nome?.trim()
+  const contactNome = quote.expand?.contact_id?.nome?.trim()
+  const clienteNome = leadNome || contactNome || 'Não identificado'
+  const contatoPessoa = leadNome && contactNome && leadNome !== contactNome ? contactNome : ''
 
   const isRascunho = quote.status === 'Rascunho'
   const isVisualizado = quote.status === 'Visualizado'
@@ -727,13 +729,11 @@ function QuoteTableRow({
       </td>
       <td className="py-3.5 px-4 font-semibold text-[#1E1B16]">
         <div>{clienteNome}</div>
-        {quote.expand?.lead_id?.nome &&
-          quote.expand?.contact_id?.nome &&
-          quote.expand.lead_id.nome !== quote.expand.contact_id.nome && (
-            <div className="text-[11px] text-[#8A8178] font-normal truncate">
-              Lead: {quote.expand.lead_id.nome}
-            </div>
-          )}
+        {contatoPessoa && (
+          <div className="text-[11px] text-[#8A8178] font-normal truncate">
+            A/C: {contatoPessoa}
+          </div>
+        )}
       </td>
       <td className="py-3.5 px-4 text-[#1E1B16] font-medium max-w-xs truncate">
         <span className="block truncate font-semibold">{quote.titulo || 'Sem título'}</span>
@@ -858,8 +858,10 @@ function QuoteMobileCard({
   onEsfriar: (e: React.MouseEvent) => void
   getStatusBadge: (status: string) => React.ReactNode
 }) {
-  const clienteNome =
-    quote.expand?.contact_id?.nome || quote.expand?.lead_id?.nome || 'Não identificado'
+  const leadNome = quote.expand?.lead_id?.nome?.trim()
+  const contactNome = quote.expand?.contact_id?.nome?.trim()
+  const clienteNome = leadNome || contactNome || 'Não identificado'
+  const contatoPessoa = leadNome && contactNome && leadNome !== contactNome ? contactNome : ''
 
   const isRascunho = quote.status === 'Rascunho'
   const isVisualizado = quote.status === 'Visualizado'
@@ -923,10 +925,13 @@ function QuoteMobileCard({
           </p>
         )}
       <div className="flex items-center justify-between text-xs text-[#8A8178] pt-1">
-        <span>
+        <span className="truncate pr-2">
           Cliente: <strong className="text-[#1E1B16]">{clienteNome}</strong>
+          {contatoPessoa && (
+            <span className="ml-1 text-[11px] text-[#8A8178]">(A/C: {contatoPessoa})</span>
+          )}
         </span>
-        <span className="font-bold text-[#B3541E] text-sm font-mono">
+        <span className="font-bold text-[#B3541E] text-sm font-mono flex-shrink-0">
           {quote.tiragem_valorizacao === 'combinar' && quote.inclui_editorial === false
             ? 'A combinar'
             : valorFormatado}

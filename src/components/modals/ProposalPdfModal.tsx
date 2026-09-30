@@ -56,8 +56,15 @@ export function ProposalPdfModal({
 
   const [activeTab, setActiveTab] = useState<'preview' | 'whatsapp'>('preview')
 
-  const clienteNome = quote.expand?.contact_id?.nome || quote.expand?.lead_id?.nome || 'Cliente'
-  const telefone = quote.expand?.contact_id?.telefone || quote.expand?.lead_id?.telefone || ''
+  // Precedência: quando a proposta tem lead_id, o cliente contratante principal é o LEAD (instituição)
+  const leadNome = quote.expand?.lead_id?.nome?.trim()
+  const contactNome = quote.expand?.contact_id?.nome?.trim()
+  const clienteNome = leadNome || contactNome || 'Cliente'
+  const contatoPessoa = leadNome && contactNome && leadNome !== contactNome ? contactNome : ''
+
+  const clienteEmpresa = quote.expand?.lead_id?.empresa || quote.expand?.contact_id?.empresa || ''
+  const email = quote.expand?.lead_id?.email || quote.expand?.contact_id?.email || ''
+  const telefone = quote.expand?.lead_id?.telefone || quote.expand?.contact_id?.telefone || ''
 
   const companyNome = companySettings?.nome_comercial || 'Editora Oeste'
   const companyRazao = companySettings?.razao_social || 'Editora Oeste Comunicação & Gráfica Ltda.'
@@ -230,15 +237,18 @@ export function ProposalPdfModal({
                 <div>
                   <span className="text-[10px] uppercase text-[#666]">Cliente / Contratante</span>
                   <div className="font-semibold text-sm text-[#1E1B16]">{clienteNome}</div>
-                  {quote.expand?.contact_id?.empresa && (
-                    <div className="text-xs text-[#333]">{quote.expand.contact_id.empresa}</div>
+                  {contatoPessoa && (
+                    <div className="text-xs text-[#333] mt-0.5">
+                      <span className="text-[#888]">A/C:</span> {contatoPessoa}
+                    </div>
+                  )}
+                  {clienteEmpresa && (
+                    <div className="text-xs text-[#333] mt-0.5">{clienteEmpresa}</div>
                   )}
                 </div>
                 <div className="text-xs text-[#333] sm:text-right">
                   {telefone && <div>WhatsApp: {telefone}</div>}
-                  {quote.expand?.contact_id?.email && (
-                    <div>Email: {quote.expand.contact_id.email}</div>
-                  )}
+                  {email && <div>Email: {email}</div>}
                 </div>
               </div>
 

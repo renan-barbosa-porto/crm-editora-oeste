@@ -481,9 +481,18 @@ export default function QuoteDetail() {
   const totalEditorialLiquido = Math.max(0, subtotal - valorDesconto)
 
   const prazo = quote ? getPrazoDestaque(quote) : null
-  const clienteNome =
-    quote?.expand?.contact_id?.nome || quote?.expand?.lead_id?.nome || 'Cliente não identificado'
-  const telefone = quote?.expand?.contact_id?.telefone || quote?.expand?.lead_id?.telefone || ''
+
+  // Precedência do cliente contratante: quando a proposta tem lead_id, o cliente contratante principal é o LEAD (instituição).
+  // Exibimos ambos quando existirem: Contratante = lead; A/C = contato físico.
+  const leadNome = quote?.expand?.lead_id?.nome?.trim()
+  const contactNome = quote?.expand?.contact_id?.nome?.trim()
+
+  const clienteNome = leadNome || contactNome || 'Cliente não identificado'
+  const contatoPessoa = leadNome && contactNome && leadNome !== contactNome ? contactNome : ''
+
+  const telefone = quote?.expand?.lead_id?.telefone || quote?.expand?.contact_id?.telefone || ''
+  const emailCliente = quote?.expand?.lead_id?.email || quote?.expand?.contact_id?.email || ''
+  const empresaCliente = quote?.expand?.lead_id?.empresa || quote?.expand?.contact_id?.empresa || ''
 
   const companyNome = companySettings?.nome_comercial || 'Editora Oeste'
   const waMsg = quote
@@ -1278,9 +1287,17 @@ export default function QuoteDetail() {
             <CardContent className="p-4 space-y-3 text-xs">
               <div>
                 <span className="font-semibold uppercase tracking-wider text-[#8A8178] text-[10px]">
-                  Nome
+                  Cliente / Contratante
                 </span>
                 <div className="font-bold text-sm text-[#1E1B16] mt-0.5">{clienteNome}</div>
+                {contatoPessoa && (
+                  <div className="text-xs text-[#333] mt-1">
+                    <span className="text-[#8A8178]">A/C:</span> {contatoPessoa}
+                  </div>
+                )}
+                {empresaCliente && (
+                  <div className="text-xs text-[#666] mt-0.5">{empresaCliente}</div>
+                )}
               </div>
 
               {telefone && (
@@ -1300,6 +1317,15 @@ export default function QuoteDetail() {
                       Conversar
                     </a>
                   </div>
+                </div>
+              )}
+
+              {emailCliente && (
+                <div>
+                  <span className="font-semibold uppercase tracking-wider text-[#8A8178] text-[10px]">
+                    Email
+                  </span>
+                  <div className="text-xs text-[#1E1B16] mt-0.5">{emailCliente}</div>
                 </div>
               )}
 

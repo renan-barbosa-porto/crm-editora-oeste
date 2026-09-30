@@ -365,8 +365,11 @@ export default function Index() {
                 </div>
               ) : (
                 pendentesOrdenados.slice(0, 6).map((quote) => {
-                  const clienteNome =
-                    quote.expand?.contact_id?.nome || quote.expand?.lead_id?.nome || 'Cliente'
+                  const leadNome = quote.expand?.lead_id?.nome?.trim()
+                  const contactNome = quote.expand?.contact_id?.nome?.trim()
+                  const clienteNome = leadNome || contactNome || 'Cliente'
+                  const contatoPessoa =
+                    leadNome && contactNome && leadNome !== contactNome ? contactNome : ''
                   const valor = (quoteValues[quote.id] || 0).toLocaleString('pt-BR', {
                     style: 'currency',
                     currency: 'BRL',
@@ -412,8 +415,11 @@ export default function Index() {
                             )}
                           </div>
                           <p className="text-xs text-[#8A8178]">
-                            Cliente: <strong className="text-[#1E1B16]">{clienteNome}</strong> •
-                            Enviado: {dataEnvioFmt}
+                            Cliente: <strong className="text-[#1E1B16]">{clienteNome}</strong>
+                            {contatoPessoa && (
+                              <span className="ml-1 text-[#8A8178]">(A/C: {contatoPessoa})</span>
+                            )}{' '}
+                            • Enviado: {dataEnvioFmt}
                           </p>
                         </div>
 
@@ -493,8 +499,11 @@ export default function Index() {
                 </p>
               ) : (
                 rascunhosOrdenados.slice(0, 4).map((q) => {
-                  const clienteNome =
-                    q.expand?.contact_id?.nome || q.expand?.lead_id?.nome || 'Cliente'
+                  const leadNome = q.expand?.lead_id?.nome?.trim()
+                  const contactNome = q.expand?.contact_id?.nome?.trim()
+                  const clienteNome = leadNome || contactNome || 'Cliente'
+                  const contatoPessoa =
+                    leadNome && contactNome && leadNome !== contactNome ? contactNome : ''
                   const valor = (quoteValues[q.id] || 0).toLocaleString('pt-BR', {
                     style: 'currency',
                     currency: 'BRL',
@@ -524,7 +533,14 @@ export default function Index() {
                           </p>
                         )}
                       <div className="flex items-center justify-between mt-1 text-[11px] text-[#8A8178]">
-                        <span className="truncate max-w-[120px]">{clienteNome}</span>
+                        <span
+                          className="truncate max-w-[120px]"
+                          title={
+                            contatoPessoa ? `${clienteNome} (A/C: ${contatoPessoa})` : clienteNome
+                          }
+                        >
+                          {clienteNome}
+                        </span>
                         <span className="font-mono font-bold text-[#B3541E]">{valor}</span>
                       </div>
                     </div>
@@ -550,8 +566,9 @@ export default function Index() {
               ) : (
                 orcamentosAtencao.slice(0, 4).map((q) => {
                   const prazo = getPrazoDestaque(q)
-                  const clienteNome =
-                    q.expand?.contact_id?.nome || q.expand?.lead_id?.nome || 'Cliente'
+                  const leadNome = q.expand?.lead_id?.nome?.trim()
+                  const contactNome = q.expand?.contact_id?.nome?.trim()
+                  const clienteNome = leadNome || contactNome || 'Cliente'
                   return (
                     <div
                       key={q.id}

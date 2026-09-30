@@ -31,20 +31,10 @@ export function getErrorMessage(error: unknown): string {
 export function isNetworkError(error: unknown): boolean {
   if (!error) return false
   if (error instanceof ClientResponseError) {
-    if (
-      error.status === 0 ||
-      error.status === 503 ||
-      error.status === 502 ||
-      error.status === 504
-    ) {
-      return true
-    }
+    return error.status === 0 || error.isAbort
   }
-  const msg = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase()
-  return (
-    msg.includes('network') ||
-    msg.includes('failed to fetch') ||
-    msg.includes('connection') ||
-    msg.includes('timeout')
-  )
+  if (error instanceof TypeError && error.message.toLowerCase().includes('fetch')) {
+    return true
+  }
+  return false
 }

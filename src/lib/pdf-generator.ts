@@ -102,11 +102,18 @@ export function buildProposalPrintHTML(params: {
 
   const logoUrl = getCompanyLogoUrl(companySettings)
 
-  const clienteNome = quote.expand?.contact_id?.nome || quote.expand?.lead_id?.nome || 'Cliente'
-  const clienteEmail = quote.expand?.contact_id?.email || quote.expand?.lead_id?.email || ''
+  // Precedência do cliente contratante: quando a proposta tem lead_id, o cliente contratante principal é o LEAD (instituição).
+  // Se houver contato físico associado (ex: Islanna Cruz) diferente da instituição, exibimos como A/C (Aos cuidados de).
+  const leadNome = quote.expand?.lead_id?.nome?.trim()
+  const contactNome = quote.expand?.contact_id?.nome?.trim()
+
+  const clienteNome = leadNome || contactNome || 'Cliente'
+  const contatoPessoa = leadNome && contactNome && leadNome !== contactNome ? contactNome : ''
+
+  const clienteEmail = quote.expand?.lead_id?.email || quote.expand?.contact_id?.email || ''
   const clienteTelefone =
-    quote.expand?.contact_id?.telefone || quote.expand?.lead_id?.telefone || ''
-  const clienteEmpresa = quote.expand?.contact_id?.empresa || quote.expand?.lead_id?.empresa || ''
+    quote.expand?.lead_id?.telefone || quote.expand?.contact_id?.telefone || ''
+  const clienteEmpresa = quote.expand?.lead_id?.empresa || quote.expand?.contact_id?.empresa || ''
 
   // Número da proposta exatamente como digitado pelo usuário (sem fallback automático fixo se estiver vazio)
   const refDigitada =
@@ -418,7 +425,8 @@ export function buildProposalPrintHTML(params: {
             Cliente / Contratante
           </div>
           <div style="font-size: 13px; font-weight: 600; color: #000000;">${escapeHtml(clienteNome)}</div>
-          ${clienteEmpresa ? `<div style="font-size: 11px; color: #333333;">${escapeHtml(clienteEmpresa)}</div>` : ''}
+          ${contatoPessoa ? `<div style="font-size: 11.5px; color: #222222; margin-top: 1px;"><span style="color: #666666;">A/C:</span> ${escapeHtml(contatoPessoa)}</div>` : ''}
+          ${clienteEmpresa ? `<div style="font-size: 11px; color: #333333; margin-top: 1px;">${escapeHtml(clienteEmpresa)}</div>` : ''}
         </div>
         <div style="font-size: 11.5px; color: #000000; text-align: right;">
           ${clienteTelefone ? `<div>WhatsApp: ${escapeHtml(clienteTelefone)}</div>` : ''}
@@ -496,6 +504,28 @@ function escapeHtml(str?: string): string {
  * Abre a janela de visualização/impressão do PDF com o layout da proposta.
  * O usuário pode salvar como PDF com máxima nitidez ou imprimir diretamente.
  */
+/**
+ * Utilitário seguro para coletar regras de estilos sem estourar SecurityError
+ * quando alguma stylesheet externa (ex: Google Fonts sem CORS ou de CDN) for inspecionada.
+ */
+export function safeGetStyleSheetRules(sheet: CSSStyleSheet): CSSRule[] {
+  try {
+    if (sheet.cssRules) {
+      return Array.from(sheet.cssRules)
+    }
+    return []
+  } catch {
+    // SecurityError / DOMException quando a folha de estilo for cross-origin
+    return []
+  }
+}
+
+/**
+ * Abre a janela de visualização/impressão do PDF com o layout da proposta.
+ * O usuário pode salvar como PDF com máxima nitidez ou imprimir diretamente.
+ * Totalmente protegido contra SecurityError/DOMException e erros síncronos
+ * que possam estourar e cair no ErrorBoundary da aplicação.
+ */
 export function openProposalPdfWindow(params: {
   quote: Quote
   items: QuoteItem[]
@@ -508,41 +538,76 @@ export function openProposalPdfWindow(params: {
   numeroReferencia?: string
   autoPrint?: boolean
 }) {
-  const html = buildProposalPrintHTML(params)
-  const printWindow = window.open('', '_blank')
-  if (printWindow) {
-    printWindow.document.open()
-    printWindow.document.write(html)
-    printWindow.document.close()
-    if (params.autoPrint) {
-      setTimeout(() => {
-        try {
-          printWindow.print()
-        } catch {
-          /* intentionally ignored */
+  try {
+    const html = buildProposalPrintHTML(params)
+    const printWindow = window.open('', '_blank')
+
+    if (printWindow) {
+      try {
+        printWindow.document.open()
+        printWindow.document.write(html)
+        printWindow.document.close()
+
+        if (params.autoPrint) {
+          setTimeout(() => {
+            try {
+              printWindow.focus()
+              printWindow.print()
+            } catch {
+              /* intentionally ignored */
+            }
+          }, 400)
         }
-      }, 350)
+      } catch (docErr) {
+        console.warn('[openProposalPdfWindow] Falha ao escrever na janela aberta:', docErr)
+      }
+    } else {
+      // Fallback se popup bloqueado: cria iframe temporário para imprimir
+      try {
+        const iframe = document.createElement('iframe')
+        iframe.style.position = 'fixed'
+        iframe.style.right = '0'
+        iframe.style.bottom = '0'
+        iframe.style.width = '0'
+        iframe.style.height = '0'
+        iframe.style.border = '0'
+        iframe.setAttribute('aria-hidden', 'true')
+        document.body.appendChild(iframe)
+
+        const doc = iframe.contentWindow?.document
+        if (doc) {
+          doc.open()
+          doc.write(html)
+          doc.close()
+
+          setTimeout(() => {
+            try {
+              iframe.contentWindow?.focus()
+              iframe.contentWindow?.print()
+            } catch (printErr) {
+              console.warn(
+                '[openProposalPdfWindow] Falha ao disparar impressão no iframe:',
+                printErr,
+              )
+            } finally {
+              setTimeout(() => {
+                try {
+                  if (iframe.parentNode) {
+                    document.body.removeChild(iframe)
+                  }
+                } catch {
+                  /* intentionally ignored */
+                }
+              }, 2000)
+            }
+          }, 500)
+        }
+      } catch (iframeErr) {
+        console.warn('[openProposalPdfWindow] Falha no fallback de iframe:', iframeErr)
+      }
     }
-  } else {
-    // Fallback se popup bloqueado: cria iframe temporário para imprimir
-    const iframe = document.createElement('iframe')
-    iframe.style.position = 'fixed'
-    iframe.style.right = '0'
-    iframe.style.bottom = '0'
-    iframe.style.width = '0'
-    iframe.style.height = '0'
-    iframe.style.border = '0'
-    document.body.appendChild(iframe)
-    const doc = iframe.contentWindow?.document
-    if (doc) {
-      doc.open()
-      doc.write(html)
-      doc.close()
-      setTimeout(() => {
-        iframe.contentWindow?.focus()
-        iframe.contentWindow?.print()
-        setTimeout(() => document.body.removeChild(iframe), 2000)
-      }, 500)
-    }
+  } catch (err) {
+    // Garante que absolutamente nenhum erro inesperado derrube o ErrorBoundary da rota
+    console.error('[openProposalPdfWindow] Erro capturado na geração da proposta:', err)
   }
 }
