@@ -4,15 +4,9 @@ import type { Quote, QuoteItem, QuoteStatus } from '@/types/crm'
 export async function getQuotes(statusFilter?: string): Promise<Quote[]> {
   let filter: string | undefined = undefined
 
-  if (statusFilter === 'pendentes') {
+  const isPendentes = statusFilter === 'pendentes'
+  if (isPendentes) {
     filter = "status = 'Enviado' || status = 'Visualizado'"
-    // Listas de orçamentos pendentes de follow-up ordenadas do mais antigo para o mais recente
-    return await pb.collection('quotes').getFullList<Quote>({
-      sort: 'created',
-      filter,
-      expand: 'lead_id,contact_id',
-      requestKey: null,
-    })
   } else if (statusFilter === 'rascunhos') {
     filter = "status = 'Rascunho'"
   } else if (statusFilter === 'aprovados') {
@@ -25,12 +19,26 @@ export async function getQuotes(statusFilter?: string): Promise<Quote[]> {
     filter = `status = '${statusFilter}'`
   }
 
-  return await pb.collection('quotes').getFullList<Quote>({
-    sort: '-created',
-    filter,
-    expand: 'lead_id,contact_id',
-    requestKey: null,
-  })
+  const sortOrder = isPendentes ? 'created' : '-created'
+
+  try {
+    return await pb.collection('quotes').getFullList<Quote>({
+      sort: sortOrder,
+      filter,
+      expand: 'lead_id,contact_id',
+      requestKey: null,
+    })
+  } catch (err: any) {
+    console.warn(
+      '[getQuotes] Falha ao carregar com expand lead_id/contact_id, tentando fallback sem expand:',
+      err,
+    )
+    return await pb.collection('quotes').getFullList<Quote>({
+      sort: sortOrder,
+      filter,
+      requestKey: null,
+    })
+  }
 }
 
 export async function getQuoteById(id: string): Promise<Quote> {

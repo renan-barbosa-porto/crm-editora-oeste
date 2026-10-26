@@ -14,11 +14,25 @@ export async function getLeads(filters?: { search?: string; empresa?: string }):
     filterParts.push(`empresa = '${emp}'`)
   }
 
-  return await pb.collection('leads').getFullList<Lead>({
-    sort: '-created',
-    filter: filterParts.length > 0 ? filterParts.join(' && ') : undefined,
-    expand: 'contact_id',
-  })
+  const filter = filterParts.length > 0 ? filterParts.join(' && ') : undefined
+
+  // Tenta primeiro com expand: 'contact_id' e retry em falhas transitórias
+  try {
+    return await pb.collection('leads').getFullList<Lead>({
+      sort: '-created',
+      filter,
+      expand: 'contact_id',
+      requestKey: null,
+    })
+  } catch (err: any) {
+    // Se falhar o expand ou houver inconsistência de relação, tenta fallback sem expand
+    console.warn('[getLeads] Falha na busca com expand, tentando fallback sem expand:', err)
+    return await pb.collection('leads').getFullList<Lead>({
+      sort: '-created',
+      filter,
+      requestKey: null,
+    })
+  }
 }
 
 export async function getLeadById(id: string): Promise<Lead> {

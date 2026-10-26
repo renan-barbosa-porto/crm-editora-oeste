@@ -13,7 +13,7 @@ onRecordAfterCreateSuccess((e) => {
   }
 
   try {
-    const id = record.getId()
+    const id = record.id || record.getString('id')
     const suffix =
       id && id.length >= 4
         ? id.substring(id.length - 4).toUpperCase()

@@ -51,6 +51,7 @@ export default function Index() {
   const [quotes, setQuotes] = useState<Quote[]>([])
   const [quoteValues, setQuoteValues] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(true)
+  const [fetchError, setFetchError] = useState<string | null>(null)
 
   // Modais de Criação Rápida
   const [newLeadModalOpen, setNewLeadModalOpen] = useState(false)
@@ -62,13 +63,44 @@ export default function Index() {
   const [pdfModalOpen, setPdfModalOpen] = useState(false)
 
   const fetchData = async () => {
-    try {
-      const [leadsData, quotesData] = await Promise.all([getLeads(), getQuotes('todos')])
-      setLeads(leadsData)
-      setQuotes(quotesData)
+    setLoading(true)
+    setFetchError(null)
 
-      // Buscar valores dos orçamentos considerando a tiragem de valorização
-      const quotesNeedingItems = (quotesData || []).filter(
+    // Busca leads e quotes de forma isolada (Promise.allSettled) para que falha em um
+    // NUNCA derrube ou oculte o outro!
+    const [leadsResult, quotesResult] = await Promise.allSettled([getLeads(), getQuotes('todos')])
+
+    const errors: string[] = []
+
+    if (leadsResult.status === 'fulfilled') {
+      setLeads(Array.isArray(leadsResult.value) ? leadsResult.value : [])
+    } else {
+      console.error('[Index] Falha ao buscar leads:', leadsResult.reason)
+      errors.push('Não foi possível carregar os leads.')
+    }
+
+    let loadedQuotes: Quote[] = []
+    if (quotesResult.status === 'fulfilled') {
+      loadedQuotes = Array.isArray(quotesResult.value) ? quotesResult.value : []
+      setQuotes(loadedQuotes)
+    } else {
+      console.error('[Index] Falha ao buscar quotes:', quotesResult.reason)
+      errors.push('Não foi possível carregar os orçamentos.')
+    }
+
+    if (
+      errors.length > 0 &&
+      leadsResult.status === 'rejected' &&
+      quotesResult.status === 'rejected'
+    ) {
+      setFetchError(
+        'Não foi possível carregar os dados do painel. Verifique sua conexão e tente novamente.',
+      )
+    }
+
+    // Buscar valores dos orçamentos considerando a tiragem de valorização
+    try {
+      const quotesNeedingItems = (loadedQuotes || []).filter(
         (q) => !q.expand?.quote_items_via_quote_id,
       )
 
@@ -77,12 +109,16 @@ export default function Index() {
         try {
           itemsByQuoteId = await getQuoteItemsByQuoteIds(quotesNeedingItems.map((q) => q.id))
         } catch (itemsErr) {
-          console.warn('Erro ao carregar itens de orçamentos em lote no painel:', itemsErr)
+          console.warn(
+            '[Index] Erro tolerado ao carregar itens de orçamentos em lote no painel:',
+            itemsErr,
+          )
         }
       }
 
       const valuesMap: Record<string, number> = {}
-      for (const q of quotesData || []) {
+      for (const q of loadedQuotes || []) {
+        if (!q || !q.id) continue
         try {
           const items = q.expand?.quote_items_via_quote_id || itemsByQuoteId[q.id] || []
           valuesMap[q.id] = calcularValorQuote(q, items)
@@ -91,8 +127,8 @@ export default function Index() {
         }
       }
       setQuoteValues(valuesMap)
-    } catch (err) {
-      console.error('Erro ao carregar dados do painel:', err)
+    } catch (calcErr) {
+      console.warn('[Index] Erro tolerado ao calcular valores dos orçamentos:', calcErr)
     } finally {
       setLoading(false)
     }
@@ -119,24 +155,6 @@ export default function Index() {
     } catch {
       toast({
         title: 'Erro ao esfriar orçamento',
-        variant: 'destructive',
-      })
-    }
-  }
-
-  // Ação rápida Enviar (Rascunho -> Enviado)
-  const handleMarcarEnviado = async (quoteId: string, e: React.MouseEvent) => {
-    e.stopPropagation()
-    try {
-      await updateQuoteStatus(quoteId, 'Enviado')
-      setQuotes((prev) => prev.map((q) => (q.id === quoteId ? { ...q, status: 'Enviado' } : q)))
-      toast({
-        title: 'Orçamento marcado como Enviado',
-        description: 'Agora ativo no painel de follow-up.',
-      })
-    } catch {
-      toast({
-        title: 'Erro ao enviar orçamento',
         variant: 'destructive',
       })
     }
@@ -187,20 +205,26 @@ export default function Index() {
 
   // Orçamentos Pendentes de follow-up (apenas enviados/visualizados): mais antigos primeiro
   const pendentesOrdenados = useMemo(() => {
-    const pendentes = quotes.filter((q) => q.status === 'Enviado' || q.status === 'Visualizado')
-    return pendentes.sort((a, b) => {
-      const timeA = getQuoteDataEnvio(a)?.getTime() || new Date(a.created).getTime()
-      const timeB = getQuoteDataEnvio(b)?.getTime() || new Date(b.created).getTime()
+    const safeQuotes = Array.isArray(quotes) ? quotes : []
+    const pendentes = safeQuotes.filter(
+      (q) => q && (q.status === 'Enviado' || q.status === 'Visualizado'),
+    )
+    return [...pendentes].sort((a, b) => {
+      const timeA =
+        getQuoteDataEnvio(a)?.getTime() || (a.created ? new Date(a.created).getTime() : 0)
+      const timeB =
+        getQuoteDataEnvio(b)?.getTime() || (b.created ? new Date(b.created).getTime() : 0)
       return timeA - timeB
     })
   }, [quotes])
 
   // Rascunhos Recentes: criados recentemente, ordenados do mais novo para o mais antigo
   const rascunhosOrdenados = useMemo(() => {
-    const rasc = quotes.filter((q) => q.status === 'Rascunho')
-    return rasc.sort((a, b) => {
-      const timeA = new Date(a.created).getTime()
-      const timeB = new Date(b.created).getTime()
+    const safeQuotes = Array.isArray(quotes) ? quotes : []
+    const rasc = safeQuotes.filter((q) => q && q.status === 'Rascunho')
+    return [...rasc].sort((a, b) => {
+      const timeA = a.created ? new Date(a.created).getTime() : 0
+      const timeB = b.created ? new Date(b.created).getTime() : 0
       return timeB - timeA // Mais recentes primeiro
     })
   }, [quotes])
@@ -226,6 +250,24 @@ export default function Index() {
 
   return (
     <div className="space-y-6">
+      {/* Alerta de erro com botão Tentar novamente caso o carregamento falhe */}
+      {fetchError && (
+        <div className="p-4 rounded-md border border-red-200 bg-red-50 text-red-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs sm:text-sm shadow-sm">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-5 h-5 text-red-600 flex-shrink-0" />
+            <span>{fetchError}</span>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={fetchData}
+            className="h-8 border-red-300 text-red-800 hover:bg-red-100 self-start sm:self-auto"
+          >
+            Tentar novamente
+          </Button>
+        </div>
+      )}
+
       {/* Banner de Boas-Vindas e Ações Rápidas */}
       <div className="bg-white p-6 rounded-lg border border-[#E5DFD6] shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>

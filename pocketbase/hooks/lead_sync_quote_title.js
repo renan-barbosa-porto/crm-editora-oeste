@@ -4,7 +4,7 @@
 
 onRecordAfterUpdateSuccess((e) => {
   const lead = e.record
-  const leadId = lead.getId()
+  const leadId = lead.id || lead.getString('id')
   const novoNome = lead.getString('nome')
   const nomeAntigo = lead.original() ? lead.original().getString('nome') : ''
 

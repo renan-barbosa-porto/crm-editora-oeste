@@ -68,6 +68,7 @@ export default function Leads() {
 
   const [leads, setLeads] = useState<Lead[]>([])
   const [loading, setLoading] = useState(true)
+  const [fetchError, setFetchError] = useState<string | null>(null)
   const [searchTerm, setSearchTerm] = useState(searchParams.get('q') || '')
   const [selectedEmpresa, setSelectedEmpresa] = useState<string>('all')
   const [perdidoExpanded, setPerdidoExpanded] = useState(false)
@@ -81,11 +82,17 @@ export default function Leads() {
   const [modalEstagio, setModalEstagio] = useState<LeadEstagio>('Novo')
 
   const fetchLeads = async () => {
+    setLoading(true)
+    setFetchError(null)
     try {
       const data = await getLeads()
-      setLeads(data)
-    } catch (err) {
-      console.error('Erro ao buscar leads:', err)
+      setLeads(Array.isArray(data) ? data : [])
+    } catch (err: any) {
+      console.error('[Leads] Erro ao buscar leads:', err)
+      setFetchError(
+        err?.message ||
+          'Não foi possível carregar os leads do funil de vendas. Verifique sua conexão e tente novamente.',
+      )
     } finally {
       setLoading(false)
     }
@@ -107,9 +114,10 @@ export default function Leads() {
 
   // Lista única de empresas para o dropdown
   const empresasDisponiveis = useMemo(() => {
+    const safeLeads = Array.isArray(leads) ? leads : []
     const set = new Set<string>()
-    leads.forEach((l) => {
-      if (l.empresa && l.empresa.trim()) {
+    safeLeads.forEach((l) => {
+      if (l && l.empresa && l.empresa.trim()) {
         set.add(l.empresa.trim())
       }
     })
@@ -118,14 +126,20 @@ export default function Leads() {
 
   // Filtros aplicados em tempo real
   const filteredLeads = useMemo(() => {
-    return leads.filter((l) => {
-      const matchSearch =
-        !searchTerm.trim() ||
-        l.nome.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (l.telefone && l.telefone.includes(searchTerm)) ||
-        (l.empresa && l.empresa.toLowerCase().includes(searchTerm.toLowerCase()))
+    const safeLeads = Array.isArray(leads) ? leads : []
+    const term = (searchTerm || '').trim().toLowerCase()
 
-      const matchEmpresa = selectedEmpresa === 'all' || l.empresa?.trim() === selectedEmpresa
+    return safeLeads.filter((l) => {
+      if (!l) return false
+      const nome = (l.nome || '').toLowerCase()
+      const telefone = (l.telefone || '').toLowerCase()
+      const empresa = (l.empresa || '').toLowerCase()
+
+      const matchSearch =
+        !term || nome.includes(term) || telefone.includes(term) || empresa.includes(term)
+
+      const matchEmpresa =
+        selectedEmpresa === 'all' || (l.empresa?.trim() || '') === selectedEmpresa
 
       return matchSearch && matchEmpresa
     })
@@ -195,6 +209,24 @@ export default function Leads() {
 
   return (
     <div className="space-y-5">
+      {/* Alerta de erro com botão Tentar novamente caso o carregamento falhe */}
+      {fetchError && (
+        <div className="p-4 rounded-md border border-red-200 bg-red-50 text-red-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs sm:text-sm shadow-sm">
+          <div className="flex items-center gap-2">
+            <span className="font-semibold">Erro:</span>
+            <span>{fetchError}</span>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={fetchLeads}
+            className="h-8 border-red-300 text-red-800 hover:bg-red-100 self-start sm:self-auto"
+          >
+            Tentar novamente
+          </Button>
+        </div>
+      )}
+
       {/* Cabeçalho de Ações */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div>
@@ -294,12 +326,14 @@ export default function Leads() {
               <div className="space-y-2.5 flex-1 overflow-y-auto">
                 {columnLeads.length === 0 ? (
                   <div className="h-24 flex items-center justify-center text-center text-xs text-[#8A8178] border border-dashed border-[#E5DFD6] rounded-md">
-                    Nenhum lead
+                    {searchTerm || selectedEmpresa !== 'all'
+                      ? 'Nenhum lead com este filtro'
+                      : 'Nenhum lead neste estágio'}
                   </div>
                 ) : (
                   columnLeads.map((lead) => {
                     const valorFmt = lead.valor_estimado
-                      ? lead.valor_estimado.toLocaleString('pt-BR', {
+                      ? Number(lead.valor_estimado).toLocaleString('pt-BR', {
                           style: 'currency',
                           currency: 'BRL',
                         })
@@ -319,14 +353,14 @@ export default function Leads() {
                         )}
                       >
                         <p className="font-semibold text-sm text-[#1E1B16] line-clamp-1">
-                          {lead.nome}
+                          {lead.nome || 'Lead sem nome'}
                         </p>
                         {lead.empresa && (
                           <p className="text-xs text-[#8A8178] truncate mt-0.5">{lead.empresa}</p>
                         )}
                         <div className="flex items-center justify-between mt-2 pt-2 border-t border-[#FAF8F5] text-xs">
                           <span className="text-[#8A8178] truncate max-w-[120px]">
-                            {lead.telefone}
+                            {lead.telefone || '-'}
                           </span>
                           {valorFmt && (
                             <span className="font-semibold text-[#B3541E] text-xs">{valorFmt}</span>
