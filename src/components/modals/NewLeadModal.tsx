@@ -20,6 +20,7 @@ import {
 import { createLead } from '@/services/leads'
 import { createContact, findContactByEmail } from '@/services/contacts'
 import { useToast } from '@/hooks/use-toast'
+import { extractFieldErrors, getErrorMessage } from '@/lib/pocketbase/errors'
 import type { LeadEstagio } from '@/types/crm'
 
 interface NewLeadModalProps {
@@ -87,20 +88,26 @@ export function NewLeadModal({
           const newContact = await createContact({
             nome: nome.trim(),
             telefone: telefone.trim(),
-            email: email.trim() || undefined,
-            empresa: empresa.trim() || undefined,
+            ...(email.trim() ? { email: email.trim() } : {}),
+            ...(empresa.trim() ? { empresa: empresa.trim() } : {}),
           })
           contactId = newContact.id
         }
       }
 
+      const parsedValor = valorEstimado.trim()
+        ? parseFloat(valorEstimado.trim().replace(',', '.'))
+        : undefined
+
       await createLead({
         nome: nome.trim(),
         telefone: telefone.trim(),
-        email: email.trim() || undefined,
-        empresa: empresa.trim() || undefined,
+        ...(email.trim() ? { email: email.trim() } : {}),
+        ...(empresa.trim() ? { empresa: empresa.trim() } : {}),
         estagio,
-        valor_estimado: valorEstimado ? parseFloat(valorEstimado.replace(',', '.')) : undefined,
+        ...(parsedValor !== undefined && !Number.isNaN(parsedValor)
+          ? { valor_estimado: parsedValor }
+          : {}),
         observacoes: observacoes.trim() || undefined,
         contact_id: contactId,
       })
@@ -120,9 +127,15 @@ export function NewLeadModal({
       onOpenChange(false)
       if (onSuccess) onSuccess()
     } catch (error: any) {
+      const fieldErrs = extractFieldErrors(error)
+      if (Object.keys(fieldErrs).length > 0) {
+        setErrors((prev) => ({ ...prev, ...fieldErrs }))
+      }
+
+      const message = getErrorMessage(error) || 'Verifique as informações e tente novamente.'
       toast({
         title: 'Erro ao criar lead',
-        description: error?.message || 'Verifique as informações e tente novamente.',
+        description: message,
         variant: 'destructive',
       })
     } finally {

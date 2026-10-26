@@ -11,6 +11,7 @@ import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
 import { createContact, findContactByEmail } from '@/services/contacts'
 import { useToast } from '@/hooks/use-toast'
+import { extractFieldErrors, getErrorMessage } from '@/lib/pocketbase/errors'
 
 interface NewContactModalProps {
   open: boolean
@@ -64,9 +65,9 @@ export function NewContactModal({ open, onOpenChange, onSuccess }: NewContactMod
       await createContact({
         nome: nome.trim(),
         telefone: telefone.trim(),
-        email: email.trim() || undefined,
-        empresa: empresa.trim() || undefined,
-        endereco: endereco.trim() || undefined,
+        ...(email.trim() ? { email: email.trim() } : {}),
+        ...(empresa.trim() ? { empresa: empresa.trim() } : {}),
+        ...(endereco.trim() ? { endereco: endereco.trim() } : {}),
       })
 
       toast({
@@ -82,9 +83,15 @@ export function NewContactModal({ open, onOpenChange, onSuccess }: NewContactMod
       onOpenChange(false)
       if (onSuccess) onSuccess()
     } catch (error: any) {
+      const fieldErrs = extractFieldErrors(error)
+      if (Object.keys(fieldErrs).length > 0) {
+        setErrors((prev) => ({ ...prev, ...fieldErrs }))
+      }
+
+      const message = getErrorMessage(error) || 'Verifique as informações e tente novamente.'
       toast({
         title: 'Erro ao cadastrar contato',
-        description: error?.message || 'Verifique as informações e tente novamente.',
+        description: message,
         variant: 'destructive',
       })
     } finally {

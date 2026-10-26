@@ -45,7 +45,27 @@ export async function findContactByEmail(email: string): Promise<Contact | null>
 }
 
 export async function createContact(data: Partial<Contact>): Promise<Contact> {
-  return await pb.collection('contacts').create<Contact>(data)
+  const payload: Record<string, any> = {
+    nome: (data.nome || '').trim(),
+    telefone: (data.telefone || '').trim(),
+  }
+
+  const emailTrim = (data.email || '').trim()
+  if (emailTrim) {
+    payload.email = emailTrim
+  }
+
+  const empresaTrim = (data.empresa || '').trim()
+  if (empresaTrim) {
+    payload.empresa = empresaTrim
+  }
+
+  const enderecoTrim = (data.endereco || '').trim()
+  if (enderecoTrim) {
+    payload.endereco = enderecoTrim
+  }
+
+  return await pb.collection('contacts').create<Contact>(payload)
 }
 
 export async function updateContact(id: string, data: Partial<Contact>): Promise<Contact> {
