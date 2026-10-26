@@ -176,20 +176,35 @@ export default function Index() {
     }
   }
 
-  // Estatísticas do Painel
+  // Estatísticas do Painel (tolerante a maiúsculas/minúsculas de status)
   const stats = useMemo(() => {
-    const totalLeads = leads.length
-    const orcamentosPendentes = quotes.filter(
-      (q) => q.status === 'Enviado' || q.status === 'Visualizado',
-    ).length
-    const rascunhos = quotes.filter((q) => q.status === 'Rascunho').length
+    const safeLeads = Array.isArray(leads) ? leads : []
+    const safeQuotes = Array.isArray(quotes) ? quotes : []
+    const totalLeads = safeLeads.length
 
-    const orcamentosAprovados = quotes.filter((q) => q.status === 'Aprovado')
-    const orcamentosEsfriados = quotes.filter((q) => q.status === 'Esfriou').length
+    const orcamentosPendentes = safeQuotes.filter((q) => {
+      if (!q) return false
+      const s = (q.status || '').trim().toLowerCase()
+      return s === 'enviado' || s === 'visualizado'
+    }).length
+
+    const rascunhos = safeQuotes.filter((q) => {
+      if (!q) return false
+      return (q.status || '').trim().toLowerCase() === 'rascunho'
+    }).length
+
+    const orcamentosAprovados = safeQuotes.filter((q) => {
+      if (!q) return false
+      return (q.status || '').trim().toLowerCase() === 'aprovado'
+    })
+    const orcamentosEsfriados = safeQuotes.filter((q) => {
+      if (!q) return false
+      return (q.status || '').trim().toLowerCase() === 'esfriou'
+    }).length
 
     const valorAprovado = orcamentosAprovados.reduce((acc, q) => acc + (quoteValues[q.id] || 0), 0)
 
-    const totalOrcamentos = quotes.length
+    const totalOrcamentos = safeQuotes.length
     const taxaConversao =
       totalOrcamentos > 0 ? ((orcamentosAprovados.length / totalOrcamentos) * 100).toFixed(1) : '0'
 
@@ -206,14 +221,24 @@ export default function Index() {
   // Orçamentos Pendentes de follow-up (apenas enviados/visualizados): mais antigos primeiro
   const pendentesOrdenados = useMemo(() => {
     const safeQuotes = Array.isArray(quotes) ? quotes : []
-    const pendentes = safeQuotes.filter(
-      (q) => q && (q.status === 'Enviado' || q.status === 'Visualizado'),
-    )
+    const pendentes = safeQuotes.filter((q) => {
+      if (!q) return false
+      const s = (q.status || '').trim().toLowerCase()
+      return s === 'enviado' || s === 'visualizado'
+    })
     return [...pendentes].sort((a, b) => {
-      const timeA =
-        getQuoteDataEnvio(a)?.getTime() || (a.created ? new Date(a.created).getTime() : 0)
-      const timeB =
-        getQuoteDataEnvio(b)?.getTime() || (b.created ? new Date(b.created).getTime() : 0)
+      let timeA = 0
+      let timeB = 0
+      try {
+        timeA = getQuoteDataEnvio(a)?.getTime() || (a.created ? new Date(a.created).getTime() : 0)
+      } catch {
+        timeA = 0
+      }
+      try {
+        timeB = getQuoteDataEnvio(b)?.getTime() || (b.created ? new Date(b.created).getTime() : 0)
+      } catch {
+        timeB = 0
+      }
       return timeA - timeB
     })
   }, [quotes])
@@ -221,10 +246,23 @@ export default function Index() {
   // Rascunhos Recentes: criados recentemente, ordenados do mais novo para o mais antigo
   const rascunhosOrdenados = useMemo(() => {
     const safeQuotes = Array.isArray(quotes) ? quotes : []
-    const rasc = safeQuotes.filter((q) => q && q.status === 'Rascunho')
+    const rasc = safeQuotes.filter((q) => {
+      if (!q) return false
+      return (q.status || '').trim().toLowerCase() === 'rascunho'
+    })
     return [...rasc].sort((a, b) => {
-      const timeA = a.created ? new Date(a.created).getTime() : 0
-      const timeB = b.created ? new Date(b.created).getTime() : 0
+      let timeA = 0
+      let timeB = 0
+      try {
+        timeA = a.created ? new Date(a.created).getTime() : 0
+      } catch {
+        timeA = 0
+      }
+      try {
+        timeB = b.created ? new Date(b.created).getTime() : 0
+      } catch {
+        timeB = 0
+      }
       return timeB - timeA // Mais recentes primeiro
     })
   }, [quotes])
@@ -412,18 +450,33 @@ export default function Index() {
                   const clienteNome = leadNome || contactNome || 'Cliente'
                   const contatoPessoa =
                     leadNome && contactNome && leadNome !== contactNome ? contactNome : ''
-                  const valor = (quoteValues[quote.id] || 0).toLocaleString('pt-BR', {
-                    style: 'currency',
-                    currency: 'BRL',
-                  })
-                  const prazo = getPrazoDestaque(quote)
-                  const dataEnvioObj = getQuoteDataEnvio(quote)
-                  const dataEnvioFmt = dataEnvioObj
-                    ? dataEnvioObj.toLocaleDateString('pt-BR', {
+                  let valor = 'R$ 0,00'
+                  try {
+                    valor = (Number(quoteValues[quote.id]) || 0).toLocaleString('pt-BR', {
+                      style: 'currency',
+                      currency: 'BRL',
+                    })
+                  } catch {
+                    valor = 'R$ 0,00'
+                  }
+                  let prazo: any = null
+                  try {
+                    prazo = getPrazoDestaque(quote)
+                  } catch {
+                    prazo = null
+                  }
+                  let dataEnvioFmt = 'Hoje'
+                  try {
+                    const dataEnvioObj = getQuoteDataEnvio(quote)
+                    if (dataEnvioObj && !isNaN(dataEnvioObj.getTime())) {
+                      dataEnvioFmt = dataEnvioObj.toLocaleDateString('pt-BR', {
                         day: '2-digit',
                         month: '2-digit',
                       })
-                    : 'Hoje'
+                    }
+                  } catch {
+                    dataEnvioFmt = 'Hoje'
+                  }
 
                   return (
                     <ErrorBoundary key={quote.id}>
@@ -546,10 +599,15 @@ export default function Index() {
                   const clienteNome = leadNome || contactNome || 'Cliente'
                   const contatoPessoa =
                     leadNome && contactNome && leadNome !== contactNome ? contactNome : ''
-                  const valor = (quoteValues[q.id] || 0).toLocaleString('pt-BR', {
-                    style: 'currency',
-                    currency: 'BRL',
-                  })
+                  let valor = 'R$ 0,00'
+                  try {
+                    valor = (Number(quoteValues[q.id]) || 0).toLocaleString('pt-BR', {
+                      style: 'currency',
+                      currency: 'BRL',
+                    })
+                  } catch {
+                    valor = 'R$ 0,00'
+                  }
                   return (
                     <div
                       key={q.id}
@@ -607,7 +665,12 @@ export default function Index() {
                 </p>
               ) : (
                 orcamentosAtencao.slice(0, 4).map((q) => {
-                  const prazo = getPrazoDestaque(q)
+                  let prazo: any = null
+                  try {
+                    prazo = getPrazoDestaque(q)
+                  } catch {
+                    prazo = null
+                  }
                   const leadNome = q.expand?.lead_id?.nome?.trim()
                   const contactNome = q.expand?.contact_id?.nome?.trim()
                   const clienteNome = leadNome || contactNome || 'Cliente'

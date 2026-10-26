@@ -14,10 +14,13 @@ onRecordAfterCreateSuccess((e) => {
 
   try {
     const id = record.id || record.getString('id')
+    const numRef = record.getString('numero_referencia')
     const suffix =
-      id && id.length >= 4
-        ? id.substring(id.length - 4).toUpperCase()
-        : $security.randomString(4).toUpperCase()
+      numRef && numRef.trim() !== ''
+        ? numRef.trim()
+        : id && id.length >= 4
+          ? id.substring(id.length - 4).toUpperCase()
+          : $security.randomString(4).toUpperCase()
     const newCodigo = 'ORC-' + suffix
 
     record.set('codigo', newCodigo)

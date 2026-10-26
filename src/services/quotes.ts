@@ -194,6 +194,14 @@ export async function createQuote(
   const numeroRef = (data.numero_referencia || '').trim()
   const nowMs = Date.now()
 
+  // Garante que o campo codigo tenha valor se não preenchido, usando o numero_referencia
+  const payload: Partial<Quote> = { ...data }
+  if (!payload.codigo || payload.codigo.trim() === '') {
+    if (numeroRef) {
+      payload.codigo = 'ORC-' + numeroRef
+    }
+  }
+
   // 1. Criação do registro de quote com retry tolerante a oscilações de rede.
   // ATENÇÃO: NUNCA reutilizar preventivamente um orçamento existente antes da tentativa de salvar,
   // pois o usuário pode criar legitimamente propostas diferentes com o mesmo número de referência!
@@ -201,7 +209,7 @@ export async function createQuote(
   try {
     quote = await withRetry(
       () =>
-        pb.collection('quotes').create<Quote>(data, {
+        pb.collection('quotes').create<Quote>(payload, {
           expand: 'lead_id,contact_id',
           requestKey: null,
         }),

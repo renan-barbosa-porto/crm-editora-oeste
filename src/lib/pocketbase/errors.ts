@@ -20,34 +20,14 @@ export function extractFieldErrors(error: unknown): FieldErrors {
   return errors
 }
 
-export function isNetworkError(err: unknown): boolean {
-  if (!err) return false
-
-  const status = (err as any)?.status ?? (err as any)?.response?.status
-  if (status === 0 || status === 429 || status === 502 || status === 503 || status === 504) {
-    return true
+export function isNetworkError(error: unknown): boolean {
+  if (error instanceof ClientResponseError) {
+    return error.status === 0 || error.isAbort
   }
-
-  const msg = String((err as any)?.message || '').toLowerCase()
-  const originalMsg = String((err as any)?.originalError?.message || '').toLowerCase()
-
-  if (
-    msg.includes('failed to fetch') ||
-    msg.includes('networkerror') ||
-    msg.includes('network error') ||
-    msg.includes('load failed') ||
-    msg.includes('timeout') ||
-    msg.includes('temporarily unavailable') ||
-    originalMsg.includes('failed to fetch') ||
-    originalMsg.includes('networkerror')
-  ) {
-    return true
+  if (error instanceof Error) {
+    const msg = error.message.toLowerCase()
+    return msg.includes('network') || msg.includes('failed to fetch') || msg.includes('timeout')
   }
-
-  if ((err as any)?.isAbort === true) {
-    return true
-  }
-
   return false
 }
 

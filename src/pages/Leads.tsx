@@ -131,12 +131,17 @@ export default function Leads() {
 
     return safeLeads.filter((l) => {
       if (!l) return false
-      const nome = (l.nome || '').toLowerCase()
-      const telefone = (l.telefone || '').toLowerCase()
-      const empresa = (l.empresa || '').toLowerCase()
+      const nome = String(l.nome || '').toLowerCase()
+      const telefone = String(l.telefone || '').toLowerCase()
+      const empresa = String(l.empresa || '').toLowerCase()
+      const email = String(l.email || '').toLowerCase()
 
       const matchSearch =
-        !term || nome.includes(term) || telefone.includes(term) || empresa.includes(term)
+        !term ||
+        nome.includes(term) ||
+        telefone.includes(term) ||
+        empresa.includes(term) ||
+        email.includes(term)
 
       const matchEmpresa =
         selectedEmpresa === 'all' || (l.empresa?.trim() || '') === selectedEmpresa
@@ -283,7 +288,12 @@ export default function Leads() {
       {/* PIPELINE KANBAN (Estágios ativos: Novo, Contato Feito, Proposta Enviada, Fechado) */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 items-start">
         {ESTAGIOS.filter((st) => st.key !== 'Perdido').map((estagioInfo) => {
-          const columnLeads = filteredLeads.filter((l) => l.estagio === estagioInfo.key)
+          const columnLeads = filteredLeads.filter((l) => {
+            if (!l) return false
+            const e1 = (l.estagio || '').trim().toLowerCase()
+            const e2 = estagioInfo.key.trim().toLowerCase()
+            return e1 === e2
+          })
           const isOver = isOverColumn === estagioInfo.key
 
           return (
@@ -402,7 +412,10 @@ export default function Leads() {
               Perdido (Oportunidades Descartadas)
             </span>
             <span className="text-xs px-2 py-0.5 rounded-full bg-[#FAF8F5] text-[#8A8178] border border-[#E5DFD6] font-semibold">
-              {filteredLeads.filter((l) => l.estagio === 'Perdido').length}
+              {
+                filteredLeads.filter((l) => (l?.estagio || '').trim().toLowerCase() === 'perdido')
+                  .length
+              }
             </span>
           </div>
           <span className="text-xs text-[#8A8178]">
@@ -412,11 +425,12 @@ export default function Leads() {
 
         {perdidoExpanded && (
           <div className="p-4 pt-1 border-t border-[#E5DFD6] grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 bg-[#FAF8F5]">
-            {filteredLeads.filter((l) => l.estagio === 'Perdido').length === 0 ? (
+            {filteredLeads.filter((l) => (l?.estagio || '').trim().toLowerCase() === 'perdido')
+              .length === 0 ? (
               <p className="text-xs text-[#8A8178] p-2">Nenhum lead marcado como perdido.</p>
             ) : (
               filteredLeads
-                .filter((l) => l.estagio === 'Perdido')
+                .filter((l) => (l?.estagio || '').trim().toLowerCase() === 'perdido')
                 .map((lead) => (
                   <div
                     key={lead.id}

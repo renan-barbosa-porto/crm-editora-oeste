@@ -53,9 +53,9 @@ export default function Quotes() {
   const [loading, setLoading] = useState(true)
   const [fetchError, setFetchError] = useState<string | null>(null)
 
-  // Aba padrão: "pendentes" (Rascunho, Enviado, Visualizado)
-  const initialTab = searchParams.get('tab') || 'pendentes'
-  const [activeTab, setActiveTab] = useState<string>(initialTab)
+  // Aba padrão inicial a partir da URL, ou 'todos' como fallback mais seguro
+  const urlTab = searchParams.get('tab')
+  const [activeTab, setActiveTab] = useState<string>(urlTab || 'pendentes')
   const [searchTerm, setSearchTerm] = useState(searchParams.get('q') || '')
 
   const [newQuoteModalOpen, setNewQuoteModalOpen] = useState(false)
@@ -71,11 +71,23 @@ export default function Quotes() {
     setFetchError(null)
     try {
       const allQuotes = await getQuotes('todos')
-      setQuotes(allQuotes || [])
+      const safeQuotes = Array.isArray(allQuotes) ? allQuotes : []
+      setQuotes(safeQuotes)
+
+      // Se o usuário acessou sem tab explícita na URL e não houver pendentes,
+      // mas houver outros orçamentos, sugere ou posiciona em 'todos'
+      if (!searchParams.get('tab') && safeQuotes.length > 0) {
+        const hasPendentes = safeQuotes.some(
+          (q) => q && (q.status === 'Enviado' || q.status === 'Visualizado'),
+        )
+        if (!hasPendentes) {
+          setActiveTab('todos')
+        }
+      }
 
       // Filtra os orçamentos que precisam de busca dos itens (que não vieram via expand)
-      const quotesNeedingItems = (allQuotes || []).filter(
-        (q) => !q.expand?.quote_items_via_quote_id,
+      const quotesNeedingItems = safeQuotes.filter(
+        (q) => q && q.id && !q.expand?.quote_items_via_quote_id,
       )
 
       let itemsByQuoteId: Record<string, any[]> = {}
@@ -88,12 +100,17 @@ export default function Quotes() {
       }
 
       const valuesMap: Record<string, number> = {}
-      for (const q of allQuotes || []) {
+      for (const q of safeQuotes) {
+        if (!q || !q.id) continue
         try {
           const items = q.expand?.quote_items_via_quote_id || itemsByQuoteId[q.id] || []
           valuesMap[q.id] = calcularValorQuote(q, items)
         } catch {
-          valuesMap[q.id] = calcularValorQuote(q)
+          try {
+            valuesMap[q.id] = calcularValorQuote(q)
+          } catch {
+            valuesMap[q.id] = 0
+          }
         }
       }
       setQuoteValues(valuesMap)
@@ -176,18 +193,32 @@ export default function Quotes() {
     }
   }
 
-  // Contagens por status para exibir nas abas
+  // Contagens por status para exibir nas abas (tolerante a variações de maiúsculas/espaços)
   const tabCounts = useMemo(() => {
     const safeQuotes = Array.isArray(quotes) ? quotes : []
     return {
       todos: safeQuotes.length,
-      pendentes: safeQuotes.filter(
-        (q) => q && (q.status === 'Enviado' || q.status === 'Visualizado'),
-      ).length,
-      rascunhos: safeQuotes.filter((q) => q && q.status === 'Rascunho').length,
-      aprovados: safeQuotes.filter((q) => q && q.status === 'Aprovado').length,
-      rejeitados: safeQuotes.filter((q) => q && q.status === 'Rejeitado').length,
-      esfriados: safeQuotes.filter((q) => q && q.status === 'Esfriou').length,
+      pendentes: safeQuotes.filter((q) => {
+        if (!q) return false
+        const st = (q.status || '').trim().toLowerCase()
+        return st === 'enviado' || st === 'visualizado'
+      }).length,
+      rascunhos: safeQuotes.filter((q) => {
+        if (!q) return false
+        return (q.status || '').trim().toLowerCase() === 'rascunho'
+      }).length,
+      aprovados: safeQuotes.filter((q) => {
+        if (!q) return false
+        return (q.status || '').trim().toLowerCase() === 'aprovado'
+      }).length,
+      rejeitados: safeQuotes.filter((q) => {
+        if (!q) return false
+        return (q.status || '').trim().toLowerCase() === 'rejeitado'
+      }).length,
+      esfriados: safeQuotes.filter((q) => {
+        if (!q) return false
+        return (q.status || '').trim().toLowerCase() === 'esfriou'
+      }).length,
     }
   }, [quotes])
 
@@ -218,18 +249,21 @@ export default function Quotes() {
     const list = safeQuotes.filter((q) => {
       if (!q) return false
 
+      // Normaliza status para comparação tolerante (case-insensitive e trim)
+      const st = (q.status || '').trim().toLowerCase()
+
       // Filtro de aba
       let matchTab = true
       if (activeTab === 'pendentes') {
-        matchTab = q.status === 'Enviado' || q.status === 'Visualizado'
+        matchTab = st === 'enviado' || st === 'visualizado'
       } else if (activeTab === 'rascunhos') {
-        matchTab = q.status === 'Rascunho'
+        matchTab = st === 'rascunho'
       } else if (activeTab === 'aprovados') {
-        matchTab = q.status === 'Aprovado'
+        matchTab = st === 'aprovado'
       } else if (activeTab === 'rejeitados') {
-        matchTab = q.status === 'Rejeitado'
+        matchTab = st === 'rejeitado'
       } else if (activeTab === 'esfriados') {
-        matchTab = q.status === 'Esfriou'
+        matchTab = st === 'esfriou'
       } else if (activeTab === 'todos') {
         matchTab = true
       }
@@ -239,21 +273,19 @@ export default function Quotes() {
       // Filtro de busca
       if (!term) return true
 
-      const leadNome = (q.expand?.lead_id?.nome || '').toLowerCase()
-      const contactNome = (q.expand?.contact_id?.nome || '').toLowerCase()
-      const clienteNome = (
-        q.expand?.contact_id?.nome ||
-        q.expand?.lead_id?.nome ||
-        ''
+      const leadNome = String(q.expand?.lead_id?.nome || '').toLowerCase()
+      const contactNome = String(q.expand?.contact_id?.nome || '').toLowerCase()
+      const clienteNome = String(
+        q.expand?.contact_id?.nome || q.expand?.lead_id?.nome || '',
       ).toLowerCase()
-      const titulo = (q.titulo || '').toLowerCase()
-      const codigo = (q.codigo || '').toLowerCase()
-      const ref = (q.numero_referencia || '').toLowerCase()
+      const titulo = String(q.titulo || '').toLowerCase()
+      const codigo = String(q.codigo || '').toLowerCase()
+      const ref = String(q.numero_referencia || '').toLowerCase()
 
       return (
         titulo.includes(term) ||
-        codigo.includes(term) ||
         ref.includes(term) ||
+        codigo.includes(term) ||
         clienteNome.includes(term) ||
         leadNome.includes(term) ||
         contactNome.includes(term)
@@ -263,39 +295,58 @@ export default function Quotes() {
     // Na aba "pendentes", ordenar do mais antigo para o mais recente (mais antigo no topo)
     if (activeTab === 'pendentes') {
       return [...list].sort((a, b) => {
-        const timeA =
-          getQuoteDataEnvio(a)?.getTime() || (a.created ? new Date(a.created).getTime() : 0)
-        const timeB =
-          getQuoteDataEnvio(b)?.getTime() || (b.created ? new Date(b.created).getTime() : 0)
+        let timeA = 0
+        let timeB = 0
+        try {
+          timeA = getQuoteDataEnvio(a)?.getTime() || (a.created ? new Date(a.created).getTime() : 0)
+        } catch {
+          timeA = 0
+        }
+        try {
+          timeB = getQuoteDataEnvio(b)?.getTime() || (b.created ? new Date(b.created).getTime() : 0)
+        } catch {
+          timeB = 0
+        }
         return timeA - timeB // Ascendente: mais antigo primeiro
       })
     }
 
     // Nas outras abas (Rascunhos, Todos, etc.), mais recentes primeiro
     return [...list].sort((a, b) => {
-      const timeA = a.created ? new Date(a.created).getTime() : 0
-      const timeB = b.created ? new Date(b.created).getTime() : 0
+      let timeA = 0
+      let timeB = 0
+      try {
+        timeA = a.created ? new Date(a.created).getTime() : 0
+      } catch {
+        timeA = 0
+      }
+      try {
+        timeB = b.created ? new Date(b.created).getTime() : 0
+      } catch {
+        timeB = 0
+      }
       return timeB - timeA
     })
   }, [quotes, activeTab, searchTerm])
 
   const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'Rascunho':
+    const s = (status || '').trim().toLowerCase()
+    switch (s) {
+      case 'rascunho':
         return (
           <Badge variant="outline" className="border-[#8A8178] text-[#8A8178] bg-[#F7F5F2]">
             Rascunho
           </Badge>
         )
-      case 'Enviado':
+      case 'enviado':
         return <Badge className="bg-[#2B5F8A] text-white">Enviado</Badge>
-      case 'Visualizado':
+      case 'visualizado':
         return <Badge className="bg-[#C07A1B] text-white font-semibold">Visualizado</Badge>
-      case 'Aprovado':
+      case 'aprovado':
         return <Badge className="bg-[#2F7D4F] text-white">Aprovado</Badge>
-      case 'Rejeitado':
+      case 'rejeitado':
         return <Badge className="bg-[#B3261E] text-white">Rejeitado</Badge>
-      case 'Esfriou':
+      case 'esfriou':
         return (
           <Badge
             variant="outline"
@@ -314,17 +365,28 @@ export default function Quotes() {
     if (searchTerm.trim()) {
       return `Nenhum orçamento encontrado para "${searchTerm}".`
     }
+    const total = tabCounts.todos
     switch (activeTab) {
       case 'pendentes':
-        return 'Nenhum orçamento pendente de follow-up (Enviado ou Visualizado). Verifique a aba Rascunhos ou Todos.'
+        return total > 0
+          ? `Nenhum orçamento pendente nesta aba — existem ${total} orçamentos cadastrados no total (veja na aba Todos ou Rascunhos).`
+          : 'Nenhum orçamento pendente de follow-up (Enviado ou Visualizado).'
       case 'rascunhos':
-        return 'Nenhum orçamento em rascunho. Crie um novo no botão acima!'
+        return total > 0
+          ? `Nenhum orçamento em rascunho — existem ${total} orçamentos cadastrados no total (veja na aba Todos).`
+          : 'Nenhum orçamento em rascunho. Crie um novo no botão acima!'
       case 'aprovados':
-        return 'Nenhum orçamento aprovado até o momento.'
+        return total > 0
+          ? `Nenhum orçamento aprovado no momento — existem ${total} orçamentos cadastrados no total (veja na aba Todos).`
+          : 'Nenhum orçamento aprovado até o momento.'
       case 'rejeitados':
-        return 'Nenhum orçamento rejeitado registrado.'
+        return total > 0
+          ? `Nenhum orçamento rejeitado — existem ${total} orçamentos cadastrados no total (veja na aba Todos).`
+          : 'Nenhum orçamento rejeitado registrado.'
       case 'esfriados':
-        return 'Nenhum orçamento marcado como esfriado.'
+        return total > 0
+          ? `Nenhum orçamento esfriado — existem ${total} orçamentos cadastrados no total (veja na aba Todos).`
+          : 'Nenhum orçamento marcado como esfriado.'
       default:
         return 'Nenhum orçamento cadastrado no sistema.'
     }
@@ -673,32 +735,51 @@ function QuoteTableRow({
   const clienteNome = leadNome || contactNome || 'Não identificado'
   const contatoPessoa = leadNome && contactNome && leadNome !== contactNome ? contactNome : ''
 
-  const isRascunho = quote.status === 'Rascunho'
-  const isVisualizado = quote.status === 'Visualizado'
-  const isEsfriado = quote.status === 'Esfriou'
-  const isPendente = quote.status === 'Enviado' || quote.status === 'Visualizado'
+  const stNormalized = (quote.status || '').trim().toLowerCase()
+  const isRascunho = stNormalized === 'rascunho'
+  const isVisualizado = stNormalized === 'visualizado'
+  const isEsfriado = stNormalized === 'esfriou'
+  const isPendente = stNormalized === 'enviado' || stNormalized === 'visualizado'
 
-  const valorFormatado = (valor || 0).toLocaleString('pt-BR', {
-    style: 'currency',
-    currency: 'BRL',
-  })
+  let valorFormatado = 'R$ 0,00'
+  try {
+    valorFormatado = (Number(valor) || 0).toLocaleString('pt-BR', {
+      style: 'currency',
+      currency: 'BRL',
+    })
+  } catch {
+    valorFormatado = 'R$ 0,00'
+  }
 
-  const dataEnvioObj = getQuoteDataEnvio(quote)
-  const dataEnvioFmt = dataEnvioObj
-    ? dataEnvioObj.toLocaleDateString('pt-BR', {
+  let dataEnvioFmt = '-'
+  try {
+    const dataEnvioObj = getQuoteDataEnvio(quote)
+    if (dataEnvioObj && !isNaN(dataEnvioObj.getTime())) {
+      dataEnvioFmt = dataEnvioObj.toLocaleDateString('pt-BR', {
         day: '2-digit',
         month: '2-digit',
         year: 'numeric',
       })
-    : quote.created
-      ? new Date(quote.created).toLocaleDateString('pt-BR', {
+    } else if (quote.created) {
+      const d = new Date(quote.created)
+      if (!isNaN(d.getTime())) {
+        dataEnvioFmt = d.toLocaleDateString('pt-BR', {
           day: '2-digit',
           month: '2-digit',
           year: 'numeric',
         })
-      : '-'
+      }
+    }
+  } catch {
+    dataEnvioFmt = '-'
+  }
 
-  const prazo = getPrazoDestaque(quote)
+  let prazo: any = null
+  try {
+    prazo = getPrazoDestaque(quote)
+  } catch {
+    prazo = null
+  }
 
   return (
     <tr
@@ -863,25 +944,42 @@ function QuoteMobileCard({
   const clienteNome = leadNome || contactNome || 'Não identificado'
   const contatoPessoa = leadNome && contactNome && leadNome !== contactNome ? contactNome : ''
 
-  const isRascunho = quote.status === 'Rascunho'
-  const isVisualizado = quote.status === 'Visualizado'
-  const isEsfriado = quote.status === 'Esfriou'
-  const isPendente = quote.status === 'Enviado' || quote.status === 'Visualizado'
+  const stNormalized = (quote.status || '').trim().toLowerCase()
+  const isRascunho = stNormalized === 'rascunho'
+  const isVisualizado = stNormalized === 'visualizado'
+  const isEsfriado = stNormalized === 'esfriou'
+  const isPendente = stNormalized === 'enviado' || stNormalized === 'visualizado'
 
-  const valorFormatado = (valor || 0).toLocaleString('pt-BR', {
-    style: 'currency',
-    currency: 'BRL',
-  })
+  let valorFormatado = 'R$ 0,00'
+  try {
+    valorFormatado = (Number(valor) || 0).toLocaleString('pt-BR', {
+      style: 'currency',
+      currency: 'BRL',
+    })
+  } catch {
+    valorFormatado = 'R$ 0,00'
+  }
 
-  const prazo = getPrazoDestaque(quote)
-  const dataEnvioObj = getQuoteDataEnvio(quote)
-  const dataEnvioFmt = dataEnvioObj
-    ? dataEnvioObj.toLocaleDateString('pt-BR', {
+  let prazo: any = null
+  try {
+    prazo = getPrazoDestaque(quote)
+  } catch {
+    prazo = null
+  }
+
+  let dataEnvioFmt: string | null = null
+  try {
+    const dataEnvioObj = getQuoteDataEnvio(quote)
+    if (dataEnvioObj && !isNaN(dataEnvioObj.getTime())) {
+      dataEnvioFmt = dataEnvioObj.toLocaleDateString('pt-BR', {
         day: '2-digit',
         month: '2-digit',
         year: 'numeric',
       })
-    : null
+    }
+  } catch {
+    dataEnvioFmt = null
+  }
 
   return (
     <div

@@ -27,10 +27,14 @@ onRecordAfterUpdateSuccess((e) => {
     }
 
     if (targetEstagio) {
-      const lead = $app.findRecordById('leads', leadId)
-      if (lead && lead.getString('estagio') !== targetEstagio) {
-        lead.set('estagio', targetEstagio)
-        $app.save(lead)
+      try {
+        const lead = $app.findRecordById('leads', leadId)
+        if (lead && lead.getString('estagio') !== targetEstagio) {
+          lead.set('estagio', targetEstagio)
+          $app.save(lead)
+        }
+      } catch (e) {
+        // lead inexistente ou id inválido
       }
     }
   } catch (err) {
@@ -61,10 +65,14 @@ onRecordAfterCreateSuccess((e) => {
     }
 
     if (targetEstagio) {
-      const lead = $app.findRecordById('leads', leadId)
-      if (lead && lead.getString('estagio') !== targetEstagio) {
-        lead.set('estagio', targetEstagio)
-        $app.save(lead)
+      try {
+        const lead = $app.findRecordById('leads', leadId)
+        if (lead && lead.getString('estagio') !== targetEstagio) {
+          lead.set('estagio', targetEstagio)
+          $app.save(lead)
+        }
+      } catch (e) {
+        // lead inexistente ou id inválido
       }
     }
   } catch (err) {
