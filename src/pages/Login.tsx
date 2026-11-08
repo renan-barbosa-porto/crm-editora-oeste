@@ -1,6 +1,7 @@
-import React, { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import React, { useEffect, useState } from 'react'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
+import { clearSessionExpiredFlag, wasSessionExpired } from '@/lib/pocketbase/session'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -17,13 +18,32 @@ import { useToast } from '@/hooks/use-toast'
 import { getErrorMessage, isNetworkError } from '@/lib/pocketbase/errors'
 
 export default function Login() {
+  const [searchParams] = useSearchParams()
+  const navigate = useNavigate()
+  const { login } = useAuth()
+  const { toast } = useToast()
+
   const [email, setEmail] = useState('renandm@gmail.com')
   const [password, setPassword] = useState('Skip@Pass')
   const [isLoading, setIsLoading] = useState(false)
   const [networkError, setNetworkError] = useState<string | null>(null)
-  const { login } = useAuth()
-  const navigate = useNavigate()
-  const { toast } = useToast()
+
+  // Aviso "Sua sessão expirou. Entre novamente." — exibido quando o
+  // interceptador global derruba uma sessão morta e redireciona para cá.
+  const [sessionExpired, setSessionExpired] = useState(
+    () => wasSessionExpired() || searchParams.get('expired') === '1',
+  )
+
+  useEffect(() => {
+    // limpa o sinalizador assim que o aviso é mostrado (não reaparece em
+    // logins seguintes nem recarregando a página de login)
+    if (sessionExpired) {
+      clearSessionExpiredFlag()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const from = searchParams.get('from') || '/'
 
   const handleLogin = async (targetEmail = email, targetPassword = password) => {
     if (!targetEmail || !targetPassword) return
@@ -36,7 +56,8 @@ export default function Login() {
         title: 'Bem-vindo de volta!',
         description: 'Login efetuado com sucesso.',
       })
-      navigate('/')
+      setSessionExpired(false)
+      navigate(from, { replace: true })
     } catch (error: any) {
       if (isNetworkError(error)) {
         const netMsg =
@@ -95,6 +116,12 @@ export default function Login() {
 
           <form onSubmit={handleSubmit}>
             <CardContent className="space-y-4">
+              {sessionExpired && (
+                <div className="p-3 rounded-md bg-red-50 border border-red-200 text-red-900 text-xs flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                  <p className="leading-relaxed">Sua sessão expirou. Entre novamente.</p>
+                </div>
+              )}
               <div className="space-y-1.5">
                 <Label htmlFor="email" className="text-xs font-semibold text-[#1E1B16]">
                   E-mail

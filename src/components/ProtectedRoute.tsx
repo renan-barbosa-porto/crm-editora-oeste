@@ -1,23 +1,37 @@
-import { Navigate, Outlet } from 'react-router-dom'
+import { Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
+import { Loader2 } from 'lucide-react'
 
-export function ProtectedRoute() {
-  const { isAuthenticated, isLoading } = useAuth()
+/**
+ * Proteção de rota com validação real de sessão:
+ * - Aguarda o boot concluir a validação real (exp + authRefresh) antes de
+ *   liberar qualquer rota protegida — evita a janela em que o token morto
+ *   ainda está no authStore e a tela buscaria dados com sessão inválida.
+ * - Sem sessão válida → redirect ao /login preservando o destino original.
+ */
+export function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  const { user, bootLoading } = useAuth()
+  const location = useLocation()
 
-  if (isLoading) {
+  if (bootLoading) {
     return (
-      <div className="flex h-screen w-full items-center justify-center bg-[#F7F5F2]">
+      <div className="min-h-screen flex items-center justify-center bg-[#F5F2ED]">
         <div className="flex flex-col items-center gap-3">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-[#B3541E] border-t-transparent" />
-          <p className="font-serif text-sm text-[#8A8178]">Carregando CRM...</p>
+          <Loader2 className="w-7 h-7 animate-spin text-[#B3541E]" />
+          <p className="text-xs text-[#8A8178]">Verificando sua sessão...</p>
         </div>
       </div>
     )
   }
 
-  if (!isAuthenticated) {
-    return <Navigate to="/login" replace />
+  if (!user) {
+    return (
+      <Navigate
+        to="/login?expired=1"
+        replace
+        state={{ from: location.pathname + location.search }}
+      />
+    )
   }
-
-  return <Outlet />
+  return <>{children}</>
 }
