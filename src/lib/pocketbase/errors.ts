@@ -20,6 +20,32 @@ export function extractFieldErrors(error: unknown): FieldErrors {
   return errors
 }
 
+export function isNetworkError(error: unknown): boolean {
+  if (!error) return false
+  if (error instanceof ClientResponseError) {
+    if (error.status === 0) return true
+    const orig = (error.originalError as Error | undefined)?.message?.toLowerCase() || ''
+    if (
+      orig.includes('failed to fetch') ||
+      orig.includes('networkerror') ||
+      orig.includes('network error') ||
+      orig.includes('load failed')
+    ) {
+      return true
+    }
+  }
+  if (error instanceof Error) {
+    const msg = error.message.toLowerCase()
+    return (
+      msg.includes('failed to fetch') ||
+      msg.includes('networkerror') ||
+      msg.includes('network error') ||
+      msg.includes('load failed')
+    )
+  }
+  return false
+}
+
 export function getErrorMessage(error: unknown): string {
   if (!(error instanceof ClientResponseError)) {
     return error instanceof Error ? error.message : 'An unexpected error occurred.'

@@ -9,7 +9,9 @@ import { Loader2 } from 'lucide-react'
  *   ainda está no authStore e a tela buscaria dados com sessão inválida.
  * - Sem sessão válida → redirect ao /login preservando o destino original.
  */
-export function ProtectedRoute({ children }: { children: React.ReactNode }) {
+import { Outlet } from 'react-router-dom'
+
+export function ProtectedRoute({ children }: { children?: React.ReactNode }) {
   const { user, bootLoading } = useAuth()
   const location = useLocation()
 
@@ -33,5 +35,5 @@ export function ProtectedRoute({ children }: { children: React.ReactNode }) {
       />
     )
   }
-  return <>{children}</>
+  return <>{children ?? <Outlet />}</>
 }
