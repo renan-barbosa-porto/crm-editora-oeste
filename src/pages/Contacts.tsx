@@ -51,6 +51,9 @@ export default function Contacts() {
       setContacts(res.items)
       setTotalItems(res.totalItems)
       setTotalPages(res.totalPages)
+      // A tabela fica disponível assim que a consulta principal termina.
+      // Contagens e histórico auxiliar podem completar posteriormente.
+      setLoading(false)
 
       // Metadados opcionais não podem impedir nem ocultar a listagem principal.
       if (res.items.length === 0) {
