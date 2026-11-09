@@ -1,10 +1,10 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { getContacts } from '@/services/contacts'
-import { getLeads } from '@/services/leads'
+import { getLeadsByContactIds } from '@/services/leads'
 import { getRecentConversations } from '@/services/conversations'
 import { useRealtime } from '@/hooks/use-realtime'
-import type { Contact, Lead, Conversation } from '@/types/crm'
+import type { Contact } from '@/types/crm'
 import {
   Users,
   Search,
@@ -31,6 +31,8 @@ export default function Contacts() {
   const [page, setPage] = useState(1)
   const [searchTerm, setSearchTerm] = useState(searchParams.get('q') || '')
   const [loading, setLoading] = useState(true)
+  const [fetchError, setFetchError] = useState<string | null>(null)
+  const requestSequence = useRef(0)
 
   // Metadados auxiliares: contagem de leads vinculados e data da última conversa
   const [leadsCountMap, setLeadsCountMap] = useState<Record<string, number>>({})
@@ -39,34 +41,64 @@ export default function Contacts() {
   const [newContactModalOpen, setNewContactModalOpen] = useState(false)
 
   const fetchContacts = async () => {
+    const requestId = ++requestSequence.current
+    setLoading(true)
+    setFetchError(null)
     try {
       const res = await getContacts(page, 10, searchTerm)
+      if (requestId !== requestSequence.current) return
+
       setContacts(res.items)
       setTotalItems(res.totalItems)
       setTotalPages(res.totalPages)
-
-      // Buscar leads e conversas para montar os metadados
-      const [allLeads, allConvs] = await Promise.all([getLeads(), getRecentConversations(50)])
-
-      const counts: Record<string, number> = {}
-      for (const l of allLeads) {
-        if (l.contact_id) {
-          counts[l.contact_id] = (counts[l.contact_id] || 0) + 1
-        }
-      }
-      setLeadsCountMap(counts)
-
-      const lastConvs: Record<string, string> = {}
-      for (const c of allConvs) {
-        if (c.contact_id && !lastConvs[c.contact_id]) {
-          lastConvs[c.contact_id] = c.created
-        }
-      }
-      setLastConvMap(lastConvs)
-    } catch (err) {
-      console.error('Erro ao buscar contatos:', err)
-    } finally {
+      // A tabela fica disponível assim que a consulta principal termina.
+      // Contagens e histórico auxiliar podem completar posteriormente.
       setLoading(false)
+
+      // Metadados opcionais não podem impedir nem ocultar a listagem principal.
+      if (res.items.length === 0) {
+        setLeadsCountMap({})
+        setLastConvMap({})
+        return
+      }
+
+      const [leadsResult, convsResult] = await Promise.allSettled([
+        getLeadsByContactIds(res.items.map((contact) => contact.id)),
+        getRecentConversations(50),
+      ])
+      if (requestId !== requestSequence.current) return
+
+      if (leadsResult.status === 'fulfilled') {
+        const counts: Record<string, number> = {}
+        for (const lead of leadsResult.value) {
+          if (lead.contact_id) {
+            counts[lead.contact_id] = (counts[lead.contact_id] || 0) + 1
+          }
+        }
+        setLeadsCountMap(counts)
+      } else {
+        console.warn('[Contacts] Contagem auxiliar de leads indisponível:', leadsResult.reason)
+        setLeadsCountMap({})
+      }
+
+      if (convsResult.status === 'fulfilled') {
+        const lastConvs: Record<string, string> = {}
+        for (const conv of convsResult.value) {
+          if (conv.contact_id && !lastConvs[conv.contact_id]) {
+            lastConvs[conv.contact_id] = conv.created
+          }
+        }
+        setLastConvMap(lastConvs)
+      } else {
+        console.warn('[Contacts] Histórico auxiliar indisponível:', convsResult.reason)
+        setLastConvMap({})
+      }
+    } catch (err) {
+      if (requestId !== requestSequence.current) return
+      console.error('[Contacts] Erro ao buscar contatos:', err)
+      setFetchError('Não foi possível carregar os contatos. Verifique sua conexão e tente novamente.')
+    } finally {
+      if (requestId === requestSequence.current) setLoading(false)
     }
   }
 
@@ -129,6 +161,13 @@ export default function Contacts() {
               <div className="h-6 w-6 animate-spin rounded-full border-2 border-[#B3541E] border-t-transparent" />
               <p className="text-xs text-[#8A8178]">Carregando contatos...</p>
             </div>
+          </div>
+        ) : fetchError ? (
+          <div role="alert" className="p-8 text-center text-sm text-[#B3261E]">
+            <p>{fetchError}</p>
+            <Button variant="outline" className="mt-3" onClick={fetchContacts}>
+              Tentar novamente
+            </Button>
           </div>
         ) : contacts.length === 0 ? (
           <div className="p-8 text-center text-sm text-[#8A8178]">

@@ -8,6 +8,7 @@ import {
   updateQuoteStatus,
 } from '@/services/quotes'
 import { useRealtime } from '@/hooks/use-realtime'
+import { useCoalescedRealtimeRefresh } from '@/hooks/use-coalesced-realtime-refresh'
 import type { Lead, Quote } from '@/types/crm'
 import {
   Users,
@@ -101,7 +102,7 @@ export default function Index() {
     // Buscar valores dos orçamentos considerando a tiragem de valorização
     try {
       const quotesNeedingItems = (loadedQuotes || []).filter(
-        (q) => !q.expand?.quote_items_via_quote_id,
+        (q) => q.inclui_editorial !== false && !q.expand?.quote_items_via_quote_id,
       )
 
       let itemsByQuoteId: Record<string, any[]> = {}
@@ -138,9 +139,10 @@ export default function Index() {
     fetchData()
   }, [])
 
-  useRealtime('leads', () => fetchData())
-  useRealtime('quotes', () => fetchData())
-  useRealtime('quote_items', () => fetchData())
+  const refreshFromRealtime = useCoalescedRealtimeRefresh(fetchData)
+  useRealtime('leads', refreshFromRealtime)
+  useRealtime('quotes', refreshFromRealtime)
+  useRealtime('quote_items', refreshFromRealtime)
 
   // Ação rápida Esfriar
   const handleEsfriarQuote = async (quoteId: string, e: React.MouseEvent) => {

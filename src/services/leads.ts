@@ -73,3 +73,20 @@ export async function updateLeadEstagio(id: string, estagio: LeadEstagio): Promi
 export async function deleteLead(id: string): Promise<boolean> {
   return await pb.collection('leads').delete(id)
 }
+
+
+/**
+ * Busca apenas os leads vinculados aos contatos de uma página.
+ * Evita carregar o funil inteiro para mostrar a contagem na tabela de contatos.
+ */
+export async function getLeadsByContactIds(contactIds: string[]): Promise<Lead[]> {
+  const ids = [...new Set(contactIds.filter((id) => /^[a-zA-Z0-9_]{15}$/.test(id)))]
+  if (ids.length === 0) return []
+
+  const filters = ids.map((id) => `contact_id = '${id}'`)
+  return await pb.collection('leads').getFullList<Lead>({
+    filter: `(${filters.join(' || ')})`,
+    fields: 'id,contact_id',
+    requestKey: null,
+  })
+}
