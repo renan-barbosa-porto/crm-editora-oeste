@@ -398,6 +398,9 @@ export async function getQuoteItemsByQuoteIds(
       const items = await withRetry(() =>
         pb.collection('quote_items').getFullList<QuoteItem>({
           filter: `(${filterClause})`,
+          // Listagens só precisam destes campos para calcular o valor editorial.
+          // O PDF e a edição continuam usando getQuoteItems(), com itens completos.
+          fields: 'id,quote_id,quantidade,valor_unitario',
           sort: 'created',
         }),
       )
