@@ -1,10 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { getContacts } from '@/services/contacts'
-import { getLeads } from '@/services/leads'
+import { getLeadsByContactIds } from '@/services/leads'
 import { getRecentConversations } from '@/services/conversations'
 import { useRealtime } from '@/hooks/use-realtime'
-import type { Contact, Lead, Conversation } from '@/types/crm'
+import type { Contact } from '@/types/crm'
 import {
   Users,
   Search,
@@ -60,7 +60,7 @@ export default function Contacts() {
       }
 
       const [leadsResult, convsResult] = await Promise.allSettled([
-        getLeads(),
+        getLeadsByContactIds(res.items.map((contact) => contact.id)),
         getRecentConversations(50),
       ])
       if (requestId !== requestSequence.current) return
