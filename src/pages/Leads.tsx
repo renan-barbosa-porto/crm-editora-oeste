@@ -2,6 +2,7 @@ import React, { useEffect, useState, useMemo } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { getLeads, updateLeadEstagio } from '@/services/leads'
 import { useRealtime } from '@/hooks/use-realtime'
+import { useCoalescedRealtimeRefresh } from '@/hooks/use-coalesced-realtime-refresh'
 import type { Lead, LeadEstagio } from '@/types/crm'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -110,7 +111,8 @@ export default function Leads() {
     }
   }, [searchParams])
 
-  useRealtime('leads', () => fetchLeads())
+  const refreshFromRealtime = useCoalescedRealtimeRefresh(fetchLeads)
+  useRealtime('leads', refreshFromRealtime)
 
   // Lista única de empresas para o dropdown
   const empresasDisponiveis = useMemo(() => {
