@@ -102,7 +102,7 @@ export default function Index() {
     // Buscar valores dos orçamentos considerando a tiragem de valorização
     try {
       const quotesNeedingItems = (loadedQuotes || []).filter(
-        (q) => !q.expand?.quote_items_via_quote_id,
+        (q) => q.inclui_editorial !== false && !q.expand?.quote_items_via_quote_id,
       )
 
       let itemsByQuoteId: Record<string, any[]> = {}
