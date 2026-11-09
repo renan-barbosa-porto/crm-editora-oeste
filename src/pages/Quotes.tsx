@@ -7,6 +7,7 @@ import {
   updateQuoteStatus,
 } from '@/services/quotes'
 import { useRealtime } from '@/hooks/use-realtime'
+import { useCoalescedRealtimeRefresh } from '@/hooks/use-coalesced-realtime-refresh'
 import type { Quote, QuoteStatus } from '@/types/crm'
 import {
   FileText,
@@ -136,8 +137,9 @@ export default function Quotes() {
     if (tab && tab !== activeTab) setActiveTab(tab)
   }, [searchParams])
 
-  useRealtime('quotes', () => fetchQuotes())
-  useRealtime('quote_items', () => fetchQuotes())
+  const refreshFromRealtime = useCoalescedRealtimeRefresh(fetchQuotes)
+  useRealtime('quotes', refreshFromRealtime)
+  useRealtime('quote_items', refreshFromRealtime)
 
   // Ação de Esfriar orçamento
   const handleEsfriarQuote = async (quoteId: string, e?: React.MouseEvent) => {
