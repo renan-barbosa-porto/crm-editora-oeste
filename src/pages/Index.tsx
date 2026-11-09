@@ -8,6 +8,7 @@ import {
   updateQuoteStatus,
 } from '@/services/quotes'
 import { useRealtime } from '@/hooks/use-realtime'
+import { useCoalescedRealtimeRefresh } from '@/hooks/use-coalesced-realtime-refresh'
 import type { Lead, Quote } from '@/types/crm'
 import {
   Users,
@@ -138,9 +139,10 @@ export default function Index() {
     fetchData()
   }, [])
 
-  useRealtime('leads', () => fetchData())
-  useRealtime('quotes', () => fetchData())
-  useRealtime('quote_items', () => fetchData())
+  const refreshFromRealtime = useCoalescedRealtimeRefresh(fetchData)
+  useRealtime('leads', refreshFromRealtime)
+  useRealtime('quotes', refreshFromRealtime)
+  useRealtime('quote_items', refreshFromRealtime)
 
   // Ação rápida Esfriar
   const handleEsfriarQuote = async (quoteId: string, e: React.MouseEvent) => {
