@@ -30,5 +30,7 @@ jobs:
         run: pnpm lint
       - name: Typecheck
         run: pnpm exec tsc --noEmit -p tsconfig.app.json
+      - name: Testes do gateway de integração (sem rede e sem credenciais)
+        run: node --test integration-gateway/test/*.test.mjs
       - name: Build
         run: pnpm build
