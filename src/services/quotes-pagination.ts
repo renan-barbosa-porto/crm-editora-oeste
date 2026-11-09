@@ -43,21 +43,18 @@ export async function getQuotesPage(
   const filter = status === 'todos' ? undefined : filters[status]
   const sort = status === 'pendentes' ? 'created' : '-created'
 
-  // A expansão não deve impedir a leitura da coleção quando relacionamentos
-  // estiverem temporariamente indisponíveis.
-  const options = { sort, filter, expand: 'lead_id,contact_id', requestKey: null as null }
-  try {
-    const response = await pb.collection('quotes').getList<Quote>(safePage, safePerPage, options)
-    return {
-      items: response.items,
-      page: response.page,
-      perPage: response.perPage,
-      totalItems: response.totalItems,
-      totalPages: response.totalPages,
-    }
-  } catch (err) {
-    // Sem fallback para erros de rede, autorização ou limites: apenas expansão.
-    // Na ausência de diagnóstico conclusivo, propagamos erros ao chamador.
-    throw err
+  // Erros são propagados. Não converter erros de autenticação em lista vazia.
+  const response = await pb.collection('quotes').getList<Quote>(safePage, safePerPage, {
+    sort,
+    filter,
+    expand: 'lead_id,contact_id',
+    requestKey: null,
+  })
+  return {
+    items: response.items,
+    page: response.page,
+    perPage: response.perPage,
+    totalItems: response.totalItems,
+    totalPages: response.totalPages,
   }
 }
